@@ -1,0 +1,42 @@
+{
+  "animationType": "bluetoothRadarSearch",
+  "radarProperties": {
+    "center": {
+      "x": 500,
+      "y": 500
+    },
+    "radius": 400,
+    "sweepAngle": 60,
+    "sweepSpeed": 2,
+    "color": "#00FFFF"
+  },
+  "devices": [
+    {
+      "id": "device-1",
+      "name": "My Headphones",
+      "macAddress": "00:1A:2B:3C:4D:5E",
+      "signalStrength": -55,
+      "distance": 250,
+      "angle": 120,
+      "connected": false
+    },
+    {
+      "id": "device-2",
+      "name": "Smart Speaker",
+      "macAddress": "F1:A2:B3:C4:D5:E6",
+      "signalStrength": -78,
+      "distance": 380,
+      "angle": 280,
+      "connected": false
+    },
+    {
+      "id": "device-3",
+      "name": "Bluetooth Keyboard",
+      "macAddress": "11:22:33:44:55:66",
+      "signalStrength": -62,
+      "distance": 150,
+      "angle": 45,
+      "connected": true
+    }
+  ]
+}
