@@ -1,4 +1,4 @@
-package com.example.nova;
+package com.example.nova.util;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;

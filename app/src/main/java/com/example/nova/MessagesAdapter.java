@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Handler;
+import android.os.Looper;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.style.ForegroundColorSpan;
@@ -17,6 +18,8 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.example.nova.model.MeshMessage;
+
 import java.text.SimpleDateFormat;
 import java.util.Iterator;
 import java.util.List;
@@ -26,12 +29,12 @@ import java.util.regex.Pattern;
 
 public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.MessageViewHolder> {
 
-    private final List<Message> messageList;
+    private final List<MeshMessage> messageList; // ✅ changed to MeshMessage
     private final Context context;
-    private final Handler handler = new Handler();
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
-    // ✅ Pass context properly
-    public MessagesAdapter(Context context, List<Message> messageList) {
+    // Pass context + MeshMessage list
+    public MessagesAdapter(Context context, List<MeshMessage> messageList) {
         this.context = context;
         this.messageList = messageList;
         startAutoRemoveTask();
@@ -47,14 +50,14 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.Messag
 
     @Override
     public void onBindViewHolder(@NonNull MessageViewHolder holder, int position) {
-        Message msg = messageList.get(position);
-        holder.sender.setText(msg.getSender());
-        holder.date.setText(msg.getDate());
+        MeshMessage msg = messageList.get(position); // ✅ MeshMessage
+        holder.sender.setText(msg.sender);
+        holder.date.setText(msg.timestamp);
 
-        // Highlight location links in red and make clickable
-        Spannable spannable = new SpannableString(msg.getContent());
+        // Highlight location links in red
+        Spannable spannable = new SpannableString(msg.payload);
         Pattern pattern = Pattern.compile("Lat: [-+]?\\d*\\.?\\d+, Lon: [-+]?\\d*\\.?\\d+");
-        Matcher matcher = pattern.matcher(msg.getContent());
+        Matcher matcher = pattern.matcher(msg.payload);
         while (matcher.find()) {
             int start = matcher.start();
             int end = matcher.end();
@@ -66,9 +69,9 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.Messag
         holder.content.setText(spannable);
         Linkify.addLinks(holder.content, Linkify.WEB_URLS);
 
-        // Click to open location in Google Maps if present
+        // Open Maps on location tap
         holder.content.setOnClickListener(v -> {
-            Matcher m = pattern.matcher(msg.getContent());
+            Matcher m = pattern.matcher(msg.payload);
             if (m.find()) {
                 String loc = m.group();
                 String[] parts = loc.replace("Lat: ", "").replace("Lon: ", "").split(",");
@@ -78,7 +81,11 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.Messag
                     String geoUri = "geo:" + lat + "," + lon + "?q=" + lat + "," + lon;
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(geoUri));
                     intent.setPackage("com.google.android.apps.maps");
-                    context.startActivity(intent);
+                    try {
+                        context.startActivity(intent);
+                    } catch (Exception e) {
+                        e.printStackTrace(); // no maps installed
+                    }
                 }
             }
         });
@@ -99,23 +106,23 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.Messag
         }
     }
 
-    // ✅ Auto-remove messages after 1 hour
+    // Auto-remove messages older than 1 hour
     private void startAutoRemoveTask() {
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 long currentTime = System.currentTimeMillis();
-                Iterator<Message> iterator = messageList.iterator();
+                Iterator<MeshMessage> iterator = messageList.iterator(); // ✅ MeshMessage
                 boolean removed = false;
 
                 while (iterator.hasNext()) {
-                    Message msg = iterator.next();
+                    MeshMessage msg = iterator.next();
                     try {
                         long msgTime = new SimpleDateFormat(
-                                "EEE, dd MMM yyyy HH:mm:ss", Locale.getDefault()
-                        ).parse(msg.getDate()).getTime();
+                                "yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault() // match MeshMessage timestamp format
+                        ).parse(msg.timestamp).getTime();
 
-                        if (currentTime - msgTime > 3600 * 1000) { // older than 1 hour
+                        if (currentTime - msgTime > 3600 * 1000) { // > 1 hr
                             iterator.remove();
                             removed = true;
                         }
@@ -125,7 +132,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.Messag
                 }
 
                 if (removed) notifyDataSetChanged();
-                handler.postDelayed(this, 60 * 1000); // check every 1 min
+                handler.postDelayed(this, 60 * 1000); // every 1 min
             }
         }, 60 * 1000);
     }

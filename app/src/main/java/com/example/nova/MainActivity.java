@@ -1,221 +1,251 @@
 package com.example.nova;
 
 import android.Manifest;
+import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AlertDialog;
+import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
+import androidx.core.app.ActivityCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.example.nova.model.MeshMessage;
+import com.example.nova.service.MeshService;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
-    private Button sosButton;
+    private static final String TAG = "MainActivity";
+    private static final String PREFS_NAME = "nova_prefs";
+    private static final String KEY_USERNAME = "username";
+    private static final int PERMISSIONS_REQUEST_CODE = 101;
+
+    private Button btnSOS;
+    private ImageButton btnCall, btnLocation, btnContacts;
+    private TextView tvTitle, tvSubtitle;
     private RecyclerView messagesRecyclerView;
-    private MessagesAdapter adapter;
-    private List<Message> messages;
+
+    private MessagesAdapter messagesAdapter;
+    private final ArrayList<MeshMessage> messagesList = new ArrayList<>();
+    private String username;
 
     private boolean sosPending = false;
-    private Handler sosHandler = new Handler();
+    private Handler sosHandler = new Handler(Looper.getMainLooper());
     private Runnable sosRunnable;
 
     private FusedLocationProviderClient fusedLocationClient;
 
-    // Required permissions including POST_NOTIFICATIONS for Android 13+
-    private final String[] requiredPermissions = new String[]{
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.POST_NOTIFICATIONS
+    private final BroadcastReceiver meshReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if ("MESH_MESSAGE".equals(intent.getAction())) {
+                String payload = intent.getStringExtra("payload");
+                String sender = intent.getStringExtra("sender");
+                String timestamp = intent.getStringExtra("timestamp");
+
+                if (payload != null && sender != null) {
+                    if (timestamp == null || timestamp.isEmpty()) {
+                        timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault())
+                                .format(new Date());
+                    }
+                    MeshMessage msg = MeshMessage.createNew(sender, 3, payload, timestamp);
+                    addMessage(msg);
+                }
+            }
+        }
     };
 
-    private ActivityResultLauncher<String[]> permissionLauncher;
-
+    @RequiresApi(api = Build.VERSION_CODES.M)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        sosButton = findViewById(R.id.sosButton);
+        // Link XML views
+        btnSOS = findViewById(R.id.btnSOS);
+        btnCall = findViewById(R.id.btnCall);
+        btnLocation = findViewById(R.id.btnLocation);
+        btnContacts = findViewById(R.id.btnContacts);
+        tvTitle = findViewById(R.id.tvTitle);
+        tvSubtitle = findViewById(R.id.tvSubtitle);
         messagesRecyclerView = findViewById(R.id.messagesRecyclerView);
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
-        // Initialize messages list and adapter
-        messages = new ArrayList<>();
-        adapter = new MessagesAdapter(this, messages); // ✅ pass context
+        // Setup RecyclerView
+        messagesAdapter = new MessagesAdapter(this, messagesList);
         messagesRecyclerView.setLayoutManager(new LinearLayoutManager(this));
-        messagesRecyclerView.setAdapter(adapter);
+        messagesRecyclerView.setAdapter(messagesAdapter);
 
-        // Permission launcher for runtime permissions
-        permissionLauncher = registerForActivityResult(
-                new ActivityResultContracts.RequestMultiplePermissions(),
-                result -> {
-                    boolean granted = true;
-                    for (Boolean b : result.values()) {
-                        if (!b) {
-                            granted = false;
-                            break;
-                        }
-                    }
-                    if (granted) {
-                        initializeApp();
-                        askUserName(); // Ask name after permissions granted
-                    } else {
-                        Log.d("MainActivity", "Required permissions denied.");
-                    }
-                });
-
+        // Check permissions
         checkPermissions();
 
-        // SOS button click
-        sosButton.setOnClickListener(v -> handleSosClick());
+        // First-time username setup
+        checkFirstTimeSetup();
+
+        // Start MeshService safely
+        Intent serviceIntent = new Intent(this, MeshService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
+        }
+
+        // SOS button with countdown/cancel
+        btnSOS.setOnClickListener(v -> handleSOSButton());
+
+        // Other buttons (logs for now)
+        btnCall.setOnClickListener(v -> Log.d(TAG, "Call clicked"));
+        btnLocation.setOnClickListener(v -> Log.d(TAG, "Location clicked"));
+        btnContacts.setOnClickListener(v -> Log.d(TAG, "Contacts clicked"));
     }
 
-    // Ask user for their name and save in SharedPreferences
-    private void askUserName() {
-        SharedPreferences prefs = getSharedPreferences("NovaPrefs", MODE_PRIVATE);
-        String name = prefs.getString("user_name", null);
-
-        if (name == null) {
+    private void checkFirstTimeSetup() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        username = prefs.getString(KEY_USERNAME, null);
+        if (username == null) {
             AlertDialog.Builder builder = new AlertDialog.Builder(this);
             builder.setTitle("Enter Your Name");
-
-            final EditText input = new EditText(this);
-            input.setHint("Your name");
+            EditText input = new EditText(this);
+            input.setHint("Your Name");
             builder.setView(input);
-
             builder.setCancelable(false);
-            builder.setPositiveButton("OK", (dialog, which) -> {
-                String userName = input.getText().toString().trim();
-                if (!userName.isEmpty()) {
-                    prefs.edit().putString("user_name", userName).apply();
-                } else {
-                    askUserName(); // keep asking if empty
-                }
+            builder.setPositiveButton("Save", (dialog, which) -> {
+                username = input.getText().toString().trim();
+                prefs.edit().putString(KEY_USERNAME, username).apply();
             });
             builder.show();
         }
     }
 
-    // Check required permissions
+    @RequiresApi(api = Build.VERSION_CODES.M)
     private void checkPermissions() {
-        boolean allGranted = true;
-        for (String perm : requiredPermissions) {
-            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
-                allGranted = false;
-                break;
-            }
-        }
-        if (allGranted) {
-            initializeApp();
-            askUserName();
+        ArrayList<String> permissions = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)
+                permissions.add(Manifest.permission.BLUETOOTH_SCAN);
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED)
+                permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE);
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+                permissions.add(Manifest.permission.BLUETOOTH_CONNECT);
         } else {
-            permissionLauncher.launch(requiredPermissions);
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH) != PackageManager.PERMISSION_GRANTED)
+                permissions.add(Manifest.permission.BLUETOOTH);
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADMIN) != PackageManager.PERMISSION_GRANTED)
+                permissions.add(Manifest.permission.BLUETOOTH_ADMIN);
+        }
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+
+        if (!permissions.isEmpty()) {
+            requestPermissions(permissions.toArray(new String[0]), PERMISSIONS_REQUEST_CODE);
         }
     }
 
-    // Initialize app after permissions granted
-    private void initializeApp() {
-        NotificationHelper.createNotificationChannel(this);
-        addDummyMessages();
-    }
-
-    private void addDummyMessages() {
-        SimpleDateFormat sdf = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm", Locale.getDefault());
-        messages.add(new Message("Admin", "Welcome to Nova app!", sdf.format(new Date())));
-        messages.add(new Message("User1", "SOS triggered at location XYZ", sdf.format(new Date())));
-        adapter.notifyDataSetChanged();
-    }
-
-    private void handleSosClick() {
+    private void handleSOSButton() {
         if (!sosPending) {
             sosPending = true;
-            int countdown = 5;
+            btnSOS.setText("Cancel SOS (5)");
+            final int[] countdown = {5};
 
             sosRunnable = new Runnable() {
-                int secondsLeft = countdown;
-
                 @Override
                 public void run() {
-                    if (secondsLeft > 0 && sosPending) {
-                        sosButton.setText("Cancel SOS (" + secondsLeft + "s)");
-                        secondsLeft--;
+                    if (countdown[0] > 0) {
+                        btnSOS.setText("Cancel SOS (" + countdown[0] + ")");
+                        countdown[0]--;
                         sosHandler.postDelayed(this, 1000);
-                    } else if (sosPending) {
-                        sendSos();
-                        resetSosButton();
+                    } else {
+                        sosPending = false;
+                        btnSOS.setText("SOS");
+                        sendSOSMessage();
                     }
                 }
             };
             sosHandler.post(sosRunnable);
         } else {
+            // Cancel
+            sosPending = false;
+            btnSOS.setText("SOS");
             sosHandler.removeCallbacks(sosRunnable);
-            resetSosButton();
+            Toast.makeText(this, "SOS cancelled", Toast.LENGTH_SHORT).show();
         }
     }
 
-    private void resetSosButton() {
-        sosPending = false;
-        sosButton.setText("SOS");
+    private void sendSOSMessage() {
+        String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault()).format(new Date());
+        String minimalPayload = "SOS"; // Minimal message for testing
+
+        try {
+            if (MeshService.hopManagerInstance != null) {
+                // Send minimal SOS message via hop manager
+                MeshService.hopManagerInstance.sendOutgoing(username, 3, minimalPayload);
+
+                // Show locally in RecyclerView
+                MeshMessage localMsg = MeshMessage.createNew(username, 3, minimalPayload, timestamp);
+                addMessage(localMsg);
+            } else {
+                Log.w(TAG, "HopManager instance is null. Cannot send SOS.");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending minimal SOS message", e);
+        }
     }
 
-    // Send SOS message with name + timestamp + location
-    private void sendSos() {
-        SharedPreferences prefs = getSharedPreferences("NovaPrefs", MODE_PRIVATE);
-        String userName = prefs.getString("user_name", "Unknown");
 
-        SimpleDateFormat sdf = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss", Locale.getDefault());
-        String timestamp = sdf.format(new Date());
+    private void addMessage(MeshMessage msg) {
+        if (msg == null) return;
+        messagesList.add(0, msg);
+        messagesAdapter.notifyItemInserted(0);
+        messagesRecyclerView.scrollToPosition(0);
+    }
 
-        fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
-            String locString;
-            String geoUri = null;
-            if (location != null) {
-                locString = "Lat: " + location.getLatitude() + ", Lon: " + location.getLongitude();
-                geoUri = "geo:" + location.getLatitude() + "," + location.getLongitude() +
-                        "?q=" + location.getLatitude() + "," + location.getLongitude();
-            } else {
-                locString = "Location unavailable";
-            }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        registerReceiver(meshReceiver, new IntentFilter("MESH_MESSAGE"));
+    }
 
-            String sosMessage = userName + " triggered SOS at " + timestamp + "\n" + locString;
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            unregisterReceiver(meshReceiver);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "Mesh receiver already unregistered", e);
+        }
+    }
 
-            // Add message at top of RecyclerView
-            messages.add(0, new Message(userName, sosMessage, timestamp));
-            adapter.notifyItemInserted(0);
-            messagesRecyclerView.scrollToPosition(0);
-
-            // Trigger notification if permission granted
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                            == PackageManager.PERMISSION_GRANTED) {
-                NotificationHelper.showNotification(this, "SOS Alert!", sosMessage, geoUri);
-            }
-
-            Log.d("MainActivity", "SOS sent: " + sosMessage);
-        });
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        // Optional: handle permission denials
     }
 }

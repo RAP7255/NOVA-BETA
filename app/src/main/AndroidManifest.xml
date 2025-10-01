@@ -3,10 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.nova">
 
-    <!-- Bluetooth Permissions -->
+    <!-- ======================= -->
+    <!-- BLE Permissions -->
+    <!-- ======================= -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <!-- Required for Android 12+ (scanning & connecting) -->
+
+    <!-- Android 12+ BLE permissions -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
@@ -14,22 +17,34 @@
     <uses-permission
         android:name="android.permission.BLUETOOTH_CONNECT"
         android:required="false" />
-
-    <!-- Location Permission (needed for BLE scanning on pre-Android 12) -->
     <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:name="android.permission.BLUETOOTH_ADVERTISE"
+        android:required="false" />
+
+    <!-- Location (required for BLE scanning pre-Android 12) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         tools:ignore="CoarseFineLocation" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Internet (optional, for server communication) -->
+    <!-- Network (optional, for admin dashboard or logging) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Foreground Service (for continuous BLE scanning / SOS alerts) -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- ======================= -->
+    <!-- BLE Features -->
+    <!-- ======================= -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
+    <!-- ======================= -->
+    <!-- Application -->
+    <!-- ======================= -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -57,6 +72,13 @@
         <activity
             android:name=".SOSActivity"
             android:exported="false" />
+
+        <!-- Foreground BLE Mesh Service -->
+        <service
+            android:name=".service.MeshService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|location" />
 
     </application>
 
