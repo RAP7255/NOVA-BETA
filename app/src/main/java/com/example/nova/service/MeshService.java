@@ -4,8 +4,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.bluetooth.BluetoothAdapter;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 
@@ -24,11 +26,13 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
     private static final String TAG = "MeshService";
     private static final String CHANNEL_ID = "mesh_foreground_channel";
 
-    // Expose hopManager so MainActivity can send outgoing messages
     public static HopManager hopManagerInstance;
 
     private HopManager hopManager;
     private BluetoothScanner scanner;
+    private BluetoothAdvertiser advertiser;
+
+    private final Handler handler = new Handler();
 
     @Override
     public void onCreate() {
@@ -39,20 +43,27 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
 
         // Initialize cache + advertiser
         MessageCache cache = new MessageCache(1024);
-        BluetoothAdvertiser advertiser = new BluetoothAdvertiser(this);
+        advertiser = new BluetoothAdvertiser(this);
 
-        // Scanner
+        // Optional scanner — can be null for testing SOS only
         scanner = new BluetoothScanner(this, null);
 
-        // HopManager
+        // Initialize HopManager eagerly
         hopManager = new HopManager(cache, advertiser, scanner, this);
-        hopManagerInstance = hopManager; // save static reference
+        hopManagerInstance = hopManager; // static reference
 
         // Hook scanner -> hopManager
-        scanner.setListener(hopManager);
+        if (scanner != null) scanner.setListener(hopManager);
 
-        // Start mesh
-        hopManager.start();
+        // Start HopManager after short delay to ensure Bluetooth is ready
+        handler.postDelayed(() -> {
+            if (isBluetoothReady()) {
+                hopManager.start();
+                Log.d(TAG, "HopManager started");
+            } else {
+                Log.w(TAG, "Bluetooth not ready. HopManager not started");
+            }
+        }, 1000); // 1 second delay
     }
 
     @Override
@@ -72,10 +83,8 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (hopManager != null) {
-            hopManager.stop();
-        }
-        hopManagerInstance = null; // clear static ref
+        if (hopManager != null) hopManager.stop();
+        hopManagerInstance = null;
         Log.d(TAG, "Service destroyed");
     }
 
@@ -93,29 +102,28 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
                     NotificationManager.IMPORTANCE_LOW
             );
             NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(chan);
-            }
+            if (manager != null) manager.createNotificationChannel(chan);
         }
     }
 
-    /** Called when HopManager receives a new mesh message */
+    private boolean isBluetoothReady() {
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        return adapter != null && adapter.isEnabled();
+    }
+
     @Override
     public void onNewMessage(MeshMessage message) {
         Log.i(TAG, "Received message: " + message.payload);
 
-        // Forward to UI
+        // Forward to UI safely
         Intent i = new Intent("MESH_MESSAGE");
         i.putExtra("payload", message.payload);
-        i.putExtra("sender", message.senderId); // include sender info
+        i.putExtra("sender", message.sender);
         sendBroadcast(i);
     }
 
-    /** Scanner callback — forward raw messages into hopManager */
     @Override
     public void onMessageReceived(MeshMessage message) {
-        if (hopManager != null) {
-            hopManager.onMessageReceived(message);
-        }
+        if (hopManager != null) hopManager.onMessageReceived(message);
     }
 }

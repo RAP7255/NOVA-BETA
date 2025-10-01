@@ -18,33 +18,27 @@ import androidx.core.app.ActivityCompat;
 
 import com.example.nova.model.MeshMessage;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Simple BLE advertiser that sends chunked service-data sequentially.
+ * BLE Advertiser that automatically splits payloads into BLE-safe chunks.
  */
 public class BluetoothAdvertiser {
     private static final String TAG = "BluetoothAdvertiser";
     private final BluetoothLeAdvertiser advertiser;
     private final Handler handler;
     private final ParcelUuid SERVICE_UUID = new ParcelUuid(UUID.fromString("0000FEED-0000-1000-8000-00805F9B34FB"));
-    private final int ADVERTISE_DURATION_MS = 1000; // safer than 700ms
-
+    private final int ADVERTISE_DURATION_MS = 1000;
+    private final int MAX_BLE_PAYLOAD = 20; // max bytes per BLE advertisement for service data
     private final Context context;
 
     public BluetoothAdvertiser(Context context) {
         this.context = context;
-
-        BluetoothManager bluetoothManager =
-                (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+        BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         BluetoothAdapter adapter = (bluetoothManager != null) ? bluetoothManager.getAdapter() : null;
-
-        if (adapter != null && adapter.isEnabled()) {
-            advertiser = adapter.getBluetoothLeAdvertiser();
-        } else {
-            advertiser = null;
-        }
+        advertiser = (adapter != null && adapter.isEnabled()) ? adapter.getBluetoothLeAdvertiser() : null;
         handler = new Handler(Looper.getMainLooper());
     }
 
@@ -53,52 +47,51 @@ public class BluetoothAdvertiser {
     }
 
     /**
-     * Advertise all chunks sequentially.
-     * chunkPayloadSize is used when producing chunks in MeshMessage.
+     * Splits a MeshMessage into BLE-safe chunks and advertises them sequentially.
      */
-    public void advertiseChunks(final MeshMessage msg, final int chunkPayloadSize, final AdvertiseCompleteCallback callback) throws Exception {
+    public void advertiseMeshMessage(final MeshMessage msg, final AdvertiseCompleteCallback callback) throws Exception {
         if (advertiser == null) {
             if (callback != null) callback.onFailure("Advertiser not available");
             return;
         }
 
-        // Runtime permission check (Android 12+)
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
                 != PackageManager.PERMISSION_GRANTED) {
             if (callback != null) callback.onFailure("Permission not granted: BLUETOOTH_ADVERTISE");
             return;
         }
 
-        List<String> chunks;
-        try {
-            chunks = msg.chunkedBase64(chunkPayloadSize);
-        } catch (Exception e) {
-            Log.e(TAG, "Serialization error", e);
-            if (callback != null) callback.onFailure("Serialization error: " + e.getMessage());
-            return;
-        }
+        // Determine safe chunk size
+        final int overhead = 1 + 8 + 1 + 1 + 1; // version + msgIdHash + idx + total + ttl
+        final int safeChunkSize = MAX_BLE_PAYLOAD - overhead;
+        List<String> chunks = msg.chunkedBase64(safeChunkSize);
 
-        final int total = chunks.size();
         final byte versionByte = (byte) MeshMessage.VERSION;
         final byte[] msgIdHash = MeshMessage.msgIdHash8(msg.id);
 
-        advertiseChunkAtIndex(chunks, 0, total, versionByte, msg.ttl, msgIdHash, callback);
+        advertiseChunkAtIndex(chunks, 0, versionByte, msg.ttl, msgIdHash, callback);
     }
 
     private void advertiseChunkAtIndex(final List<String> chunks,
                                        final int idx,
-                                       final int total,
                                        final byte versionByte,
                                        final int ttl,
                                        final byte[] msgIdHash,
                                        final AdvertiseCompleteCallback callback) {
-        if (idx >= total) {
+        if (idx >= chunks.size()) {
             if (callback != null) callback.onComplete();
             return;
         }
 
         final String chunkStr = chunks.get(idx);
-        final byte[] serviceData = MeshMessage.buildChunkPayload(versionByte, msgIdHash, idx, total, ttl, chunkStr);
+        final byte[] payload = MeshMessage.buildChunkPayload(versionByte, msgIdHash, idx, chunks.size(), ttl, chunkStr);
+
+        // Safety check
+        if (payload.length > MAX_BLE_PAYLOAD) {
+            Log.e(TAG, "Chunk payload too large! size=" + payload.length + " bytes, max=" + MAX_BLE_PAYLOAD);
+            if (callback != null) callback.onFailure("Chunk too large: " + payload.length + " bytes");
+            return;
+        }
 
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -108,7 +101,7 @@ public class BluetoothAdvertiser {
 
         AdvertiseData data = new AdvertiseData.Builder()
                 .addServiceUuid(SERVICE_UUID)
-                .addServiceData(SERVICE_UUID, serviceData)
+                .addServiceData(SERVICE_UUID, payload)
                 .setIncludeDeviceName(false)
                 .build();
 
@@ -116,22 +109,20 @@ public class BluetoothAdvertiser {
             @Override
             public void onStartSuccess(AdvertiseSettings settingsInEffect) {
                 super.onStartSuccess(settingsInEffect);
-                Log.d(TAG, "Advert started chunk " + idx + "/" + (total - 1));
+                Log.d(TAG, "Advert started chunk " + idx + "/" + (chunks.size() - 1) + ", size=" + payload.length);
 
+                // Delay and advertise next chunk
                 handler.postDelayed(() -> {
                     try {
-                        if (advertiser != null) {
-                            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
-                                    == PackageManager.PERMISSION_GRANTED) {
-                                advertiser.stopAdvertising(this);
-                            } else {
-                                Log.w(TAG, "Permission not granted to stopAdvertising");
-                            }
+                        if (advertiser != null &&
+                                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
+                                        == PackageManager.PERMISSION_GRANTED) {
+                            advertiser.stopAdvertising(this);
                         }
                     } catch (Exception e) {
                         Log.e(TAG, "Error stopping advertiser", e);
                     }
-                    advertiseChunkAtIndex(chunks, idx + 1, total, versionByte, ttl, msgIdHash, callback);
+                    advertiseChunkAtIndex(chunks, idx + 1, versionByte, ttl, msgIdHash, callback);
                 }, ADVERTISE_DURATION_MS);
             }
 
