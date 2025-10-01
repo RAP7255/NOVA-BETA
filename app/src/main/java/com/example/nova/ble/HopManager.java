@@ -33,11 +33,13 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         if (scanner != null) scanner.setListener(this);
 
         hopManagerInstance = this;
+        Log.d(TAG, "HopManager initialized");
     }
 
-    /** Dynamically attach or replace listener (e.g., from MainActivity) */
+    /** Dynamically attach or replace listener */
     public void setListener(HopListener listener) {
         this.listener = listener;
+        Log.d(TAG, "HopListener attached");
     }
 
     /** Start scanner */
@@ -46,30 +48,40 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             scanner.startScan();
             Log.d(TAG, "Scanner started");
         } else {
-            Log.w(TAG, "Scanner not available");
+            Log.w(TAG, "Scanner not available or unsupported");
         }
     }
 
-    /** Stop scanner */
+    /** Stop scanner safely */
     public void stop() {
         if (scanner != null) {
-            try { scanner.stopScan(); } catch (Exception ignored) {}
+            try {
+                scanner.stopScan();
+                Log.d(TAG, "Scanner stopped");
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to stop scanner", e);
+            }
         }
     }
 
-    /** Receive message callback from scanner */
+    /** Called by scanner when a message is received */
     @Override
     public void onMessageReceived(MeshMessage message) {
         if (message == null) return;
+
+        // Avoid duplicate messages
         if (cache.contains(message.id)) return;
 
         cache.put(message.id);
         Log.d(TAG, "Received message: " + message.payload + " from " + message.sender);
 
-        if (listener != null) listener.onNewMessage(message);
+        // Notify listener (MainActivity or any UI)
+        if (listener != null) {
+            listener.onNewMessage(message);
+        }
     }
 
-    /** Send a single outgoing message */
+    /** Send an outgoing message */
     public void sendOutgoing(String senderName, int initialTtl, String payload) {
         String now = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(new Date());
         MeshMessage msg = MeshMessage.createNew(senderName, initialTtl, payload, now);
