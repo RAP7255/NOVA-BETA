@@ -1,6 +1,13 @@
 package com.example.nova.ble;
 
+import android.Manifest;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.util.Log;
+
+import androidx.core.app.ActivityCompat;
+
 import com.example.nova.model.MeshMessage;
 import com.example.nova.model.MessageCache;
 
@@ -16,6 +23,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     private final BluetoothAdvertiser advertiser;
     private BluetoothScanner scanner;
     private HopListener listener;
+    private Context context;   // ✅ used for permission checks
 
     // Singleton instance
     public static HopManager hopManagerInstance;
@@ -24,7 +32,16 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         void onNewMessage(MeshMessage message);
     }
 
-    public HopManager(MessageCache cache, BluetoothAdvertiser advertiser, BluetoothScanner scanner, HopListener initialListener) {
+    /** ✅ Correct constructor: requires valid Context */
+    public HopManager(Context ctx, MessageCache cache, BluetoothAdvertiser advertiser,
+                      BluetoothScanner scanner, HopListener initialListener) {
+
+        if (ctx == null) {
+            Log.e(TAG, "❌ Null context passed to HopManager! This will cause issues.");
+            throw new IllegalArgumentException("Context cannot be null for HopManager");
+        }
+
+        this.context = ctx.getApplicationContext(); // ✅ always safe
         this.cache = cache;
         this.advertiser = advertiser;
         this.scanner = scanner;
@@ -33,7 +50,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         if (scanner != null) scanner.setListener(this);
 
         hopManagerInstance = this;
-        Log.d(TAG, "HopManager initialized");
+        Log.d(TAG, "✅ HopManager initialized successfully");
     }
 
     /** Dynamically attach or replace listener */
@@ -42,13 +59,30 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         Log.d(TAG, "HopListener attached");
     }
 
-    /** Start scanner */
+    /** Start scanner safely */
     public void start() {
-        if (scanner != null && scanner.isSupported()) {
+        if (scanner == null) {
+            Log.w(TAG, "Scanner is null");
+            return;
+        }
+
+        if (!scanner.isSupported()) {
+            Log.w(TAG, "Scanner not supported on this device");
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN)
+                        != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Permission not granted: BLUETOOTH_SCAN");
+            return;
+        }
+
+        try {
             scanner.startScan();
-            Log.d(TAG, "Scanner started");
-        } else {
-            Log.w(TAG, "Scanner not available or unsupported");
+            Log.d(TAG, "Scanner started successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start scanner", e);
         }
     }
 
@@ -69,43 +103,51 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     public void onMessageReceived(MeshMessage message) {
         if (message == null) return;
 
-        // Avoid duplicate messages
-        if (cache.contains(message.id)) return;
-
+        if (cache.contains(message.id)) return; // avoid duplicates
         cache.put(message.id);
-        Log.d(TAG, "Received message: " + message.payload + " from " + message.sender);
 
-        // Notify listener (MainActivity or any UI)
-        if (listener != null) {
-            listener.onNewMessage(message);
-        }
+        Log.d(TAG, "📩 Received message: " + message.payload + " from " + message.sender);
+
+        if (listener != null) listener.onNewMessage(message);
     }
 
-    /** Send an outgoing message */
+    /** Send an outgoing message safely with permission check */
     public void sendOutgoing(String senderName, int initialTtl, String payload) {
         String now = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(new Date());
         MeshMessage msg = MeshMessage.createNew(senderName, initialTtl, payload, now);
-
         cache.put(msg.id);
 
-        if (advertiser != null && advertiser.isSupported()) {
-            try {
-                advertiser.advertiseMeshMessage(msg, new BluetoothAdvertiser.AdvertiseCompleteCallback() {
-                    @Override
-                    public void onComplete() {
-                        Log.i(TAG, "Outgoing message advertised: " + msg.payload);
-                    }
-
-                    @Override
-                    public void onFailure(String reason) {
-                        Log.w(TAG, "Outgoing advertise failed: " + reason);
-                    }
-                });
-            } catch (Exception e) {
-                Log.e(TAG, "advertiseMeshMessage failed", e);
-            }
-        } else {
+        if (advertiser == null || !advertiser.isSupported()) {
             Log.w(TAG, "Advertiser not supported - cannot send");
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
+                        != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Outgoing advertise blocked: Missing BLUETOOTH_ADVERTISE permission");
+            return;
+        }
+
+        try {
+            advertiser.advertiseMeshMessage(msg, new BluetoothAdvertiser.AdvertiseCompleteCallback() {
+                @Override
+                public void onComplete() {
+                    Log.i(TAG, "✅ Outgoing message advertised: " + msg.payload);
+                }
+
+                @Override
+                public void onFailure(String reason) {
+                    Log.w(TAG, "⚠️ Outgoing advertise failed: " + reason);
+                }
+            });
+        } catch (SecurityException se) {
+            Log.e(TAG, "SecurityException: Missing advertise permission", se);
+        } catch (Exception e) {
+            Log.e(TAG, "advertiseMeshMessage failed", e);
         }
     }
 }
+
+
+

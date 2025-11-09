@@ -20,8 +20,9 @@
             android:gravity="center"
             android:text="NOVA"
             android:textColor="#FFFFFF"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:layout_marginTop="12dp" />
 
         <TextView
             android:id="@+id/tvSubtitle"
@@ -31,29 +32,45 @@
             android:textColor="#AAAAAA"
             android:textSize="14sp"
             android:gravity="center"
-            android:layout_marginBottom="24dp"/>
+            android:layout_marginBottom="16dp" />
+
+        <!-- Active User Count -->
+        <TextView
+            android:id="@+id/tvActiveCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Active Users: 0"
+            android:textColor="#4CAF50"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="20dp"
+            android:gravity="center"
+            android:layout_gravity="center_horizontal" />
 
         <!-- SOS Button -->
         <Button
             android:id="@+id/btnSOS"
-            android:layout_width="150dp"
-            android:layout_height="150dp"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            android:background="@drawable/round_button"
             android:text="SOS"
             android:textColor="#FFFFFF"
-            android:textSize="24sp"
-            android:backgroundTint="#F44336"
+            android:textSize="26sp"
+            android:textStyle="bold"
             android:layout_marginBottom="24dp"
-            android:shape="oval"/>
+            android:gravity="center"
+            android:elevation="8dp" />
 
-        <!-- Action Buttons -->
+        <!-- Action Buttons Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center"
-            android:layout_marginBottom="24dp"
+            android:layout_marginBottom="28dp"
             android:weightSum="3">
 
+            <!-- Call Button -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -68,16 +85,17 @@
                     android:backgroundTint="#F44336"
                     android:src="@android:drawable/ic_menu_call"
                     app:tint="#FFFFFF"
-                    android:contentDescription="Call 911"/>
+                    android:contentDescription="Call 911" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Call 911"
                     android:textColor="#FFFFFF"
-                    android:textSize="12sp"/>
+                    android:textSize="12sp" />
             </LinearLayout>
 
+            <!-- Location Button -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -92,16 +110,17 @@
                     android:backgroundTint="#FFC107"
                     android:src="@android:drawable/ic_menu_mylocation"
                     app:tint="#FFFFFF"
-                    android:contentDescription="Location"/>
+                    android:contentDescription="Location" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Location"
                     android:textColor="#FFFFFF"
-                    android:textSize="12sp"/>
+                    android:textSize="12sp" />
             </LinearLayout>
 
+            <!-- Contacts Button -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -116,14 +135,14 @@
                     android:backgroundTint="#424242"
                     android:src="@android:drawable/ic_menu_myplaces"
                     app:tint="#FFFFFF"
-                    android:contentDescription="Contacts"/>
+                    android:contentDescription="Contacts" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Contacts"
                     android:textColor="#FFFFFF"
-                    android:textSize="12sp"/>
+                    android:textSize="12sp" />
             </LinearLayout>
 
         </LinearLayout>
@@ -134,16 +153,20 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:padding="12dp"
-            android:background="#212121"
-            android:layout_marginBottom="16dp"
+            android:background="#1E1E1E"
             android:gravity="center_vertical"
-            android:layout_marginTop="8dp">
+            android:layout_marginBottom="16dp"
+            android:layout_marginTop="8dp"
+            android:elevation="2dp"
+            android:clipToOutline="true"
+            android:layout_gravity="center_horizontal"
+            android:backgroundTintMode="src_atop">
 
             <View
                 android:layout_width="12dp"
                 android:layout_height="12dp"
                 android:background="@drawable/green_dot"
-                android:layout_marginEnd="8dp"/>
+                android:layout_marginEnd="8dp" />
 
             <TextView
                 android:layout_width="0dp"
@@ -151,17 +174,18 @@
                 android:layout_weight="1"
                 android:text="System Active"
                 android:textColor="#FFFFFF"
-                android:textSize="14sp"/>
+                android:textSize="14sp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Online"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"/>
+                android:textColor="#4CAF50"
+                android:textSize="14sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Recent Alerts -->
+        <!-- Recent Alerts Header -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -169,7 +193,7 @@
             android:textColor="#FFFFFF"
             android:textSize="18sp"
             android:textStyle="bold"
-            android:layout_marginBottom="12dp"/>
+            android:layout_marginBottom="12dp" />
 
         <!-- RecyclerView for messages -->
         <androidx.recyclerview.widget.RecyclerView
@@ -177,7 +201,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:clipToPadding="false"
-            android:paddingBottom="16dp"/>
+            android:paddingBottom="24dp" />
 
     </LinearLayout>
 </ScrollView>

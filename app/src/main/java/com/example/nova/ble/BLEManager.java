@@ -1,238 +1,327 @@
 package com.example.nova.ble;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCallback;
-import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattService;
-import android.bluetooth.BluetoothManager;
+import android.bluetooth.le.AdvertiseCallback;
+import android.bluetooth.le.AdvertiseData;
+import android.bluetooth.le.AdvertiseSettings;
+import android.bluetooth.le.BluetoothLeAdvertiser;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelUuid;
 import android.util.Log;
+import android.widget.Toast;
 
 import androidx.core.content.ContextCompat;
 
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
-// We no longer extend Context. This was a critical bug.
+/**
+ * BLEManager (User App)
+ * - Handles bidirectional alert communication
+ * - Prevents overlapping BLE advertising
+ * - Handles ADVERTISE_FAILED_TOO_MANY_ADVERTISERS gracefully
+ */
 public class BLEManager {
-    private static final String TAG = "NOVA-BLE";
 
-    private BluetoothAdapter bluetoothAdapter;
-    private BluetoothGatt bluetoothGatt;
-    private Context context;
-    private OnMessageReceivedListener messageListener;
+    private static final String TAG = "BLE-USER";
+    private static final UUID SERVICE_UUID =
+            UUID.fromString("0000FEED-0000-1000-8000-00805F9B34FB");
 
-    // UUIDs (replace with BitChat’s service/characteristic later)
-    private static final UUID SERVICE_UUID = UUID.fromString("00001810-0000-1000-8000-00805f9b34fb");
-    private static final UUID CHAR_UUID = UUID.fromString("00002a35-0000-1000-8000-00805f9b34fb");
+    private final Context context;
+    private final BluetoothAdapter bluetoothAdapter;
+    private BluetoothLeAdvertiser advertiser;
+    private BluetoothLeScanner scanner;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
-    /**
-     * Constructor for the BLEManager.
-     * @param context The application or activity context.
-     * @param listener A callback listener for received messages.
-     */
+    private final Set<String> receivedAlerts = new HashSet<>();
+    private boolean isAdvertising = false;
+    private boolean isScanning = false;
+
+    private static final long ADVERTISE_DURATION_MS = 3000;
+    private static final long SCAN_CYCLE_MS = 10000;
+    private static final long ADVERTISE_COOLDOWN_MS = 500; // half a second delay to prevent overlap
+
+    private final OnMessageReceivedListener listener;
+
     public BLEManager(Context context, OnMessageReceivedListener listener) {
-        this.context = context;
-        this.messageListener = listener;
-        BluetoothManager btManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        if (btManager != null) {
-            bluetoothAdapter = btManager.getAdapter();
+        this.context = context.getApplicationContext();
+        this.listener = listener;
+
+        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (bluetoothAdapter != null && bluetoothAdapter.isEnabled()) {
+            advertiser = bluetoothAdapter.getBluetoothLeAdvertiser();
+            scanner = bluetoothAdapter.getBluetoothLeScanner();
+        } else {
+            Log.e(TAG, "❌ Bluetooth not enabled or unavailable.");
         }
     }
 
-    /**
-     * Checks if the required BLE permissions are granted.
-     * Note: This method is a helper. The host Activity or Fragment must
-     * call ActivityCompat.requestPermissions if permissions are not granted.
-     * @return true if all necessary permissions are granted, false otherwise.
-     */
-    private boolean hasScanPermissions() {
-        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-            Log.d(TAG, "Bluetooth is not enabled.");
+    // --------------------------------------------------------------------
+    // ✅ Advertiser support check
+    // --------------------------------------------------------------------
+    private boolean isAdvertisingSupported() {
+        if (bluetoothAdapter == null) {
+            Log.e(TAG, "❌ No Bluetooth adapter found.");
             return false;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        } else {
-            // For older Android versions, only location permission is needed for scanning.
-            return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        }
-    }
-
-    /**
-     * Starts the BLE scan.
-     * The host Activity/Fragment is responsible for requesting permissions beforehand.
-     */
-    public void startScan() {
-        if (!hasScanPermissions()) {
-            Log.d(TAG, "Permissions not granted. Cannot start scan. Please request permissions from your Activity/Fragment.");
-            return;
+        if (!bluetoothAdapter.isEnabled()) {
+            Log.w(TAG, "⚠️ Bluetooth is OFF.");
+            Toast.makeText(context, "Please enable Bluetooth", Toast.LENGTH_SHORT).show();
+            return false;
         }
 
-        // We no longer use `ActivityCompat.checkSelfPermission` here as the host activity must handle it.
-        bluetoothAdapter.startLeScan(scanCallback);
-        Log.d(TAG, "Scanning for devices...");
-    }
-
-    /**
-     * Stops the BLE scan.
-     */
-    public void stopScan() {
-        if (bluetoothAdapter != null) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "BLUETOOTH_SCAN permission not granted. Cannot stop scan.");
-                return;
-            }
-            bluetoothAdapter.stopLeScan(scanCallback);
-            Log.d(TAG, "Scan stopped.");
-        }
-    }
-
-    private final BluetoothAdapter.LeScanCallback scanCallback = (device, rssi, scanRecord) -> {
-        // We only check for connect permission when we actually try to connect.
-        Log.d(TAG, "Device found: " + device.getName() + " - " + device.getAddress());
-        // Auto-connect to first found device (for testing)
-        stopScan(); // Stop scanning once a device is found
-        connectToDevice(device);
-    };
-
-    /**
-     * Attempts to connect to a Bluetooth device.
-     * @param device The BluetoothDevice object to connect to.
-     */
-    public void connectToDevice(BluetoothDevice device) {
-        if (device == null) return;
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "BLUETOOTH_CONNECT permission not granted. Cannot connect.");
-            return;
+        if (!context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            Log.e(TAG, "🚫 BLE not supported on this device.");
+            Toast.makeText(context, "BLE not supported on this device", Toast.LENGTH_LONG).show();
+            return false;
         }
 
-        // The first argument to connectGatt is the context.
-        bluetoothGatt = device.connectGatt(context, false, gattCallback);
-        Log.d(TAG, "Connecting to " + device.getAddress());
-    }
-
-    /**
-     * Disconnects from the GATT server.
-     */
-    public void disconnect() {
-        if (bluetoothGatt == null) {
-            return;
+        if (!bluetoothAdapter.isMultipleAdvertisementSupported()) {
+            Log.e(TAG, "🚫 BLE advertising not supported by hardware.");
+            Toast.makeText(context, "Device does not support BLE advertising", Toast.LENGTH_LONG).show();
+            return false;
         }
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "BLUETOOTH_CONNECT permission not granted. Cannot disconnect.");
-            return;
-        }
-        bluetoothGatt.disconnect();
-        bluetoothGatt.close();
-        bluetoothGatt = null;
-        Log.d(TAG, "Disconnected from GATT server.");
-    }
 
-    private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
-        @Override
-        public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-            if (newState == BluetoothGatt.STATE_CONNECTED) {
-                Log.d(TAG, "Connected to GATT server.");
-                // Discover services once connected.
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    Log.w(TAG, "BLUETOOTH_CONNECT permission not granted for service discovery.");
-                    return;
-                }
-                gatt.discoverServices();
-            } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                Log.d(TAG, "Disconnected from GATT server.");
+        if (advertiser == null) {
+            advertiser = bluetoothAdapter.getBluetoothLeAdvertiser();
+            if (advertiser == null) {
+                Log.e(TAG, "🚫 BLE advertiser unavailable.");
+                return false;
             }
         }
 
-        @Override
-        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    Log.w(TAG, "BLUETOOTH_CONNECT permission not granted for service discovery.");
-                    return;
-                }
-
-                BluetoothGattService service = gatt.getService(SERVICE_UUID);
-                if (service != null) {
-                    BluetoothGattCharacteristic characteristic = service.getCharacteristic(CHAR_UUID);
-                    if (characteristic != null) {
-                        // Correctly set characteristic notification and read/write permissions
-                        if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) > 0) {
-                            gatt.setCharacteristicNotification(characteristic, true);
-                            Log.d(TAG, "Subscribed to characteristic notifications.");
-                        } else {
-                            Log.w(TAG, "Characteristic does not support notifications.");
-                        }
-                    } else {
-                        Log.w(TAG, "Characteristic " + CHAR_UUID + " not found.");
-                    }
-                } else {
-                    Log.w(TAG, "Service " + SERVICE_UUID + " not found.");
-                }
-            } else {
-                Log.w(TAG, "Service discovery failed with status: " + status);
-            }
+        if (!hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) {
+            Log.w(TAG, "🚫 Missing BLUETOOTH_ADVERTISE permission.");
+            return false;
         }
 
-        @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            String msg = new String(value);
-            Log.d(TAG, "Message received: " + msg);
+        return true;
+    }
 
-            // Notify the listener on the main thread. This is a much better practice than
-            // having a hardcoded dependency on an Activity.
-            new Handler(Looper.getMainLooper()).post(() -> {
-                if (messageListener != null) {
-                    messageListener.onMessageReceived(msg);
-                }
-            });
-        }
-    };
-
-    /**
-     * Sends a message to the connected device.
-     * @param message The string message to send.
-     */
+    // --------------------------------------------------------------------
+    // ✅ Send SOS or alert message (prevents overlap)
+    // --------------------------------------------------------------------
+    @SuppressLint("MissingPermission")
     public void sendMessage(String message) {
-        if (bluetoothGatt == null) {
-            Log.e(TAG, "GATT server is not connected.");
-            return;
-        }
+        if (!isAdvertisingSupported()) return;
 
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "BLUETOOTH_CONNECT permission not granted for sending message.");
-            return;
-        }
+        stopAdvertisingSafely(); // ✅ stop old advert before starting new one
+        try { Thread.sleep(ADVERTISE_COOLDOWN_MS); } catch (InterruptedException ignored) {}
 
-        BluetoothGattService service = bluetoothGatt.getService(SERVICE_UUID);
-        if (service != null) {
-            BluetoothGattCharacteristic characteristic = service.getCharacteristic(CHAR_UUID);
-            if (characteristic != null) {
-                characteristic.setValue(message.getBytes());
-                // Ensure the characteristic has the write property
-                if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) > 0) {
-                    bluetoothGatt.writeCharacteristic(characteristic);
-                    Log.d(TAG, "Message sent: " + message);
-                } else {
-                    Log.w(TAG, "Characteristic does not support writing.");
-                }
-            } else {
-                Log.w(TAG, "Characteristic " + CHAR_UUID + " not found.");
+        String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
+        String deviceName = bluetoothAdapter.getName() != null
+                ? bluetoothAdapter.getName()
+                : Build.MODEL;
+
+        String payload = "ALERT:" + message + " | " + deviceName + " | " + time;
+        byte[] data = payload.getBytes(StandardCharsets.UTF_8);
+
+        AdvertiseData advertiseData = new AdvertiseData.Builder()
+                .addServiceData(new ParcelUuid(SERVICE_UUID), data)
+                .setIncludeDeviceName(false)
+                .build();
+
+        AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(false)
+                .build();
+
+        try {
+            advertiser.startAdvertising(settings, advertiseData, advertiseCallback);
+            isAdvertising = true;
+            Log.i(TAG, "🚨 SOS broadcast sent: " + message);
+            handler.postDelayed(this::stopAdvertising, ADVERTISE_DURATION_MS);
+        } catch (SecurityException e) {
+            Log.e(TAG, "🚫 SecurityException during alert broadcast", e);
+        }
+    }
+
+    // --------------------------------------------------------------------
+    // ✅ Broadcast presence (username-based, prevents overlap)
+    // --------------------------------------------------------------------
+    @SuppressLint("MissingPermission")
+    public void startPresenceAdvert(String username) {
+        if (!isAdvertisingSupported()) return;
+
+        stopAdvertisingSafely();
+        try { Thread.sleep(ADVERTISE_COOLDOWN_MS); } catch (InterruptedException ignored) {}
+
+        String payload = "PRESENCE:" + username;
+        byte[] data = payload.getBytes(StandardCharsets.UTF_8);
+
+        AdvertiseData advertiseData = new AdvertiseData.Builder()
+                .addServiceData(new ParcelUuid(SERVICE_UUID), data)
+                .setIncludeDeviceName(false)
+                .build();
+
+        AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(false)
+                .build();
+
+        try {
+            advertiser.startAdvertising(settings, advertiseData, advertiseCallback);
+            isAdvertising = true;
+            Log.i(TAG, "📡 Presence broadcast sent: " + username);
+            handler.postDelayed(this::stopAdvertising, ADVERTISE_DURATION_MS);
+        } catch (SecurityException e) {
+            Log.e(TAG, "🚫 SecurityException during presence advertising", e);
+        }
+    }
+
+    // --------------------------------------------------------------------
+    // ✅ Stop advertising safely
+    // --------------------------------------------------------------------
+    @SuppressLint("MissingPermission")
+    public void stopAdvertisingSafely() {
+        if (advertiser != null && isAdvertising && hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) {
+            try {
+                advertiser.stopAdvertising(advertiseCallback);
+                Log.d(TAG, "🛑 Previous advertising stopped safely.");
+            } catch (SecurityException e) {
+                Log.e(TAG, "🚫 Error stopping advertising", e);
             }
-        } else {
-            Log.w(TAG, "Service " + SERVICE_UUID + " not found.");
         }
+        isAdvertising = false;
+    }
+
+    @SuppressLint("MissingPermission")
+    public void stopAdvertising() {
+        stopAdvertisingSafely();
+    }
+
+    // --------------------------------------------------------------------
+    // ✅ Start and stop scan
+    // --------------------------------------------------------------------
+    @SuppressLint("MissingPermission")
+    public void startScan() {
+        if (scanner == null) {
+            Log.e(TAG, "❌ BLE scanner not available.");
+            return;
+        }
+
+        if (isScanning) {
+            Log.w(TAG, "⚠️ Already scanning.");
+            return;
+        }
+
+        if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+            Log.w(TAG, "🚫 Missing BLUETOOTH_SCAN permission.");
+            return;
+        }
+
+        try {
+            scanner.startScan(scanCallback);
+            Log.d(TAG, "🔍 Started scanning for alerts...");
+            isScanning = true;
+            handler.postDelayed(this::stopScan, SCAN_CYCLE_MS);
+        } catch (SecurityException e) {
+            Log.e(TAG, "🚫 SecurityException during scan start", e);
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    public void stopScan() {
+        if (scanner != null && hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+            try {
+                scanner.stopScan(scanCallback);
+                Log.d(TAG, "🛑 Scanning stopped.");
+            } catch (SecurityException e) {
+                Log.e(TAG, "🚫 Error stopping scan", e);
+            }
+        }
+        isScanning = false;
+    }
+
+    // --------------------------------------------------------------------
+    // ✅ Callbacks
+    // --------------------------------------------------------------------
+    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {
+        @Override
+        public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+            Log.d(TAG, "✅ Advertising started successfully.");
+        }
+
+        @Override
+        public void onStartFailure(int errorCode) {
+            String reason;
+            switch (errorCode) {
+                case ADVERTISE_FAILED_ALREADY_STARTED:
+                    reason = "Already started";
+                    break;
+                case ADVERTISE_FAILED_DATA_TOO_LARGE:
+                    reason = "Data too large";
+                    break;
+                case ADVERTISE_FAILED_TOO_MANY_ADVERTISERS:
+                    reason = "Too many advertisers";
+                    break;
+                case ADVERTISE_FAILED_INTERNAL_ERROR:
+                    reason = "Internal error";
+                    break;
+                case ADVERTISE_FAILED_FEATURE_UNSUPPORTED:
+                    reason = "Feature unsupported";
+                    break;
+                default:
+                    reason = "Unknown error";
+            }
+            Log.w(TAG, "⚠️ Advertise failed: " + reason + " (code " + errorCode + ")");
+        }
+    };
+
+    private final ScanCallback scanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+            if (result.getScanRecord() == null) return;
+
+            byte[] data = result.getScanRecord().getServiceData(new ParcelUuid(SERVICE_UUID));
+            if (data == null || data.length == 0) return;
+
+            String msg = new String(data, StandardCharsets.UTF_8);
+            if (msg.startsWith("ALERT:")) {
+                String alert = msg.substring(6).trim();
+                if (receivedAlerts.add(alert)) {
+                    Log.i(TAG, "📩 Received alert: " + alert);
+                    if (listener != null) listener.onMessageReceived(alert);
+                }
+            }
+        }
+
+        @Override
+        public void onScanFailed(int errorCode) {
+            Log.e(TAG, "❌ Scan failed: " + errorCode);
+        }
+    };
+
+    // --------------------------------------------------------------------
+    // ✅ Helpers
+    // --------------------------------------------------------------------
+    private boolean hasPermission(String permission) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        return ContextCompat.checkSelfPermission(context, permission)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    public void shutdown() {
+        stopScan();
+        stopAdvertisingSafely();
+        receivedAlerts.clear();
+        Log.d(TAG, "🧹 BLEManager shutdown complete.");
     }
 }

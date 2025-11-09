@@ -41,21 +41,25 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
 
         createNotificationChannel();
 
-        // Initialize cache + advertiser
+        // Initialize cache, advertiser, and scanner with valid context
         MessageCache cache = new MessageCache(1024);
-        advertiser = new BluetoothAdvertiser(this);
+        advertiser = new BluetoothAdvertiser(getApplicationContext());     // ✅ context fixed
+        scanner = new BluetoothScanner(getApplicationContext(), null);      // ✅ context fixed
 
-        // Optional scanner — can be null for testing SOS only
-        scanner = new BluetoothScanner(this, null);
+        // Initialize HopManager with valid context
+        hopManager = new HopManager(
+                getApplicationContext(),                                   // ✅ fix: non-null
+                cache,
+                advertiser,
+                scanner,
+                this
+        );
+        hopManagerInstance = hopManager; // static reference for global access
 
-        // Initialize HopManager eagerly
-        hopManager = new HopManager(cache, advertiser, scanner, this);
-        hopManagerInstance = hopManager; // static reference
-
-        // Hook scanner -> hopManager
+        // Link scanner to HopManager
         if (scanner != null) scanner.setListener(hopManager);
 
-        // Start HopManager after short delay to ensure Bluetooth is ready
+        // Delay start to ensure Bluetooth stack is ready
         handler.postDelayed(() -> {
             if (isBluetoothReady()) {
                 hopManager.start();
@@ -63,7 +67,7 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
             } else {
                 Log.w(TAG, "Bluetooth not ready. HopManager not started");
             }
-        }, 1000); // 1 second delay
+        }, 1000);
     }
 
     @Override
@@ -76,7 +80,6 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
                 .build();
 
         startForeground(1, notif);
-
         return START_STICKY;
     }
 
@@ -94,6 +97,7 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
         return null; // not a bound service
     }
 
+    /** Create Foreground Notification Channel (Android 8+) */
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel chan = new NotificationChannel(
@@ -106,22 +110,25 @@ public class MeshService extends Service implements HopManager.HopListener, Blue
         }
     }
 
+    /** Check if Bluetooth is available and enabled */
     private boolean isBluetoothReady() {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         return adapter != null && adapter.isEnabled();
     }
 
+    /** Called when HopManager receives new mesh message */
     @Override
     public void onNewMessage(MeshMessage message) {
         Log.i(TAG, "Received message: " + message.payload);
 
-        // Forward to UI safely
+        // Broadcast to UI (MainActivity)
         Intent i = new Intent("MESH_MESSAGE");
         i.putExtra("payload", message.payload);
         i.putExtra("sender", message.sender);
         sendBroadcast(i);
     }
 
+    /** Forward received message from scanner to HopManager */
     @Override
     public void onMessageReceived(MeshMessage message) {
         if (hopManager != null) hopManager.onMessageReceived(message);

@@ -4,12 +4,12 @@
     package="com.example.nova">
 
     <!-- ======================= -->
-    <!-- BLE Permissions -->
+    <!-- Bluetooth / BLE Permissions -->
     <!-- ======================= -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
 
-    <!-- Android 12+ BLE permissions -->
+    <!-- Android 12+ Granular Bluetooth Permissions -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
@@ -21,26 +21,30 @@
         android:name="android.permission.BLUETOOTH_ADVERTISE"
         android:required="false" />
 
-    <!-- Location (required for BLE scanning pre-Android 12) -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+    <!-- Location (required for BLE scanning on Android 11 and below) -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
         tools:ignore="CoarseFineLocation" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Foreground service -->
+    <!-- Foreground Service Permissions (Android 14 Compliance) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Network (optional, for admin dashboard or logging) -->
+    <!-- Network Access -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- ======================= -->
-    <!-- BLE Features -->
+    <!-- Hardware Feature Declarations -->
     <!-- ======================= -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <!-- ======================= -->
     <!-- Application -->
@@ -51,7 +55,10 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.NOVA">
+        android:theme="@style/Theme.NOVA"
+        tools:targetApi="31"
+
+        >
 
         <!-- Main Activity -->
         <activity
@@ -63,12 +70,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Alert Activity -->
+        <!-- BLE Presence Test Activity -->
+        <activity
+            android:name=".PresenceTestActivity"
+            android:exported="false"
+            android:label="Presence Test" />
+
+        <!-- Other Activities -->
         <activity
             android:name=".AlertActivity"
             android:exported="false" />
-
-        <!-- SOS Activity -->
         <activity
             android:name=".SOSActivity"
             android:exported="false" />
@@ -79,7 +90,5 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
-
     </application>
-
 </manifest>
