@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#FF6F61"> <!-- Ripple effect color on touch -->
+    <item>
+        <shape android:shape="oval">
+            <!-- Radial Gradient for a glowing, intense look -->
+            <gradient
+                android:type="radial"
+                android:centerX="50%"
+                android:centerY="50%"
+                android:gradientRadius="100dp"
+                android:startColor="#FF3D00"
+                android:endColor="#A00000" />
+        </shape>
+    </item>
+</ripple>

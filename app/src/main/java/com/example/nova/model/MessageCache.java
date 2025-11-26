@@ -3,10 +3,6 @@ package com.example.nova.model;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Simple thread-safe LRU cache for message IDs.
- * Uses LinkedHashMap eviction policy.
- */
 public class MessageCache {
     private final int maxSize;
     private final Map<String, Long> map;

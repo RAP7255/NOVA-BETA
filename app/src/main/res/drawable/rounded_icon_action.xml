@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <!-- The actual tint/color is applied via android:backgroundTint in the layout -->
+    <solid android:color="#00000000" />
+    <size android:width="68dp" android:height="68dp"/>
+</shape>

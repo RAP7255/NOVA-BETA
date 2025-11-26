@@ -1,42 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
+<com.google.android.material.card.MaterialCardView
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="12dp"
-    android:background="@drawable/message_background"
-    android:layout_marginBottom="8dp"
-    android:elevation="2dp">
+    app:cardCornerRadius="12dp"
+    app:cardElevation="4dp"
+    app:cardBackgroundColor="?attr/card_background_dynamic"
+    android:layout_marginBottom="12dp"
+    android:layout_marginStart="4dp"
+    android:layout_marginEnd="4dp">
 
-    <!-- Sender Name -->
-    <TextView
-        android:id="@+id/senderText"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Sender Name"
-        android:textColor="@android:color/white"
-        android:textStyle="bold"
-        android:textSize="14sp"/>
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical">
 
-    <!-- Message Content -->
-    <TextView
-        android:id="@+id/messageText"
-        android:layout_width="wrap_content"
+        <View
+            android:id="@+id/alertIndicator"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:background="@drawable/status_dot"
+            android:backgroundTint="@color/sos_red"
+            android:layout_marginEnd="12dp"
+            android:visibility="visible" /> <LinearLayout
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="Message content"
-        android:textColor="@android:color/white"
-        android:textSize="14sp"
-        android:layout_marginTop="4dp"/>
+        android:layout_weight="1"
+        android:orientation="vertical">
 
-    <!-- Timestamp -->
-    <TextView
-        android:id="@+id/dateText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Time, Date"
-        android:textColor="@android:color/darker_gray"
-        android:textSize="12sp"
-        android:layout_marginTop="2dp"/>
+        <TextView
+            android:id="@+id/senderText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Sender Name"
+            android:textColor="?attr/text_primary_dynamic"
+            android:textStyle="bold"
+            android:textSize="16sp" />
 
-</LinearLayout>
+        <TextView
+            android:id="@+id/messageText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Message content of the alert, possibly truncated."
+            android:textColor="?attr/text_secondary_dynamic"
+            android:textSize="14sp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/dateText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Time, Date"
+            android:textColor="?attr/text_secondary_dynamic"
+            android:textSize="12sp"
+            android:layout_marginTop="6dp"/>
+    </LinearLayout>
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_chevron_right_24dp"
+            app:tint="?attr/text_secondary_dynamic"
+            android:layout_marginStart="16dp"
+            android:contentDescription="View details" />
+
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

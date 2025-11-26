@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="isLightTheme" format="boolean" />
+
+    <attr name="background_color_dynamic" format="color" />
+    <attr name="card_background_dynamic" format="color" />
+    <attr name="text_primary_dynamic" format="color" />
+    <attr name="text_secondary_dynamic" format="color" />
+
+    <attr name="colorAccentStatic" format="color" />
+
+</resources>

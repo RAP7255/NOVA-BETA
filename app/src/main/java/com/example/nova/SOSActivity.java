@@ -4,10 +4,11 @@ import android.os.Bundle;
 import android.widget.Button;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
+
 import com.example.nova.ble.BLEManager;
-import com.example.nova.ble.OnMessageReceivedListener;
 
 public class SOSActivity extends AppCompatActivity {
+
     Button btnSendSOS;
     BLEManager bleManager;
 
@@ -18,20 +19,21 @@ public class SOSActivity extends AppCompatActivity {
 
         btnSendSOS = findViewById(R.id.btnSendSOS);
 
-        bleManager = new BLEManager(this, new OnMessageReceivedListener() {
-            @Override
-            public void onMessageReceived(String message) {
-                Toast.makeText(SOSActivity.this, "🚨 Received: " + message, Toast.LENGTH_LONG).show();
-            }
+        // Initialize BLE Manager (listener receives decrypted AES messages)
+        bleManager = new BLEManager(this, message -> {
+            Toast.makeText(SOSActivity.this,
+                    "🚨 Received: " + message,
+                    Toast.LENGTH_LONG).show();
         });
 
+        // Send SOS on button click
         btnSendSOS.setOnClickListener(v -> {
-            bleManager.sendMessage("SOS ALERT!");
+            bleManager.sendSecureMessage("User", "SOS ALERT!");
             Toast.makeText(SOSActivity.this, "📡 SOS Alert Sent!", Toast.LENGTH_SHORT).show();
         });
 
-        // Optionally also scan for alerts
-        bleManager.startScan();
+        // Start scanning for mesh messages
+        bleManager.startScanning();
     }
 
     @Override

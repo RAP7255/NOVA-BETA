@@ -7,4 +7,11 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-</resources>
+
+
+
+
+
+
+
+    <color name="primary_color_static">#6A6AFF</color>         <color name="sos_red">#FF3B30</color>                      <color name="call_red">#FF453A</color>                     <color name="location_orange">#FF9F0A</color>              <color name="contacts_blue">#007AFF</color>                <color name="status_green">#34C759</color>                 <color name="background_color_light">#F5F5F5</color>      <color name="card_background_light">#FFFFFF</color>       <color name="text_primary_light">#212121</color>          <color name="text_secondary_light">#757575</color>        <color name="background_color_dark">#121212</color>      <color name="card_background_dark">#1E1E1E</color>       <color name="text_primary_dark">#FFFFFF</color>          <color name="text_secondary_dark">#AAAAAA</color>        </resources>

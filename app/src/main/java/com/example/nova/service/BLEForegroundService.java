@@ -13,67 +13,68 @@ import androidx.core.app.NotificationCompat;
 
 import com.example.nova.R;
 import com.example.nova.ble.BLEManager;
-import com.example.nova.ble.OnMessageReceivedListener;
+
+import java.util.Map;
 
 public class BLEForegroundService extends Service {
 
-    private static final String CHANNEL_ID = "NOVA_BLE_CHANNEL";
+    private static final String CHANNEL_ID = "NOVA_USER_BLE";
     private BLEManager bleManager;
 
     @Override
     public void onCreate() {
         super.onCreate();
 
-        createNotificationChannel();
+        createChannel();
 
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("NOVA Running")
-                .setContentText("Scanning for messages...")
+                .setContentTitle("NOVA - Mesh Active")
+                .setContentText("Keeping BLE mesh services alive")
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setOngoing(true)
                 .build();
 
-        startForeground(1, notification);
+        startForeground(2, notification);
 
-        // Initialize BLEManager with a listener
-        bleManager = new BLEManager(getApplicationContext(), new OnMessageReceivedListener() {
-            @Override
-            public void onMessageReceived(String message) {
-                // Handle background alert propagation
-                // Optional: trigger notifications or relay messages
-            }
-        });
+        // Initialize BLEManager (user-side) to keep scanning/advertising/GATT server alive
+        bleManager = new BLEManager(
+                getApplicationContext(),
+                new BLEManager.OnMessageReceivedListener() {
+                    @Override
+                    public void onMessageReceived(String decryptedPayload) {
+                        // user service doesn't need UI — but you can post notifications here if wanted
+                    }
 
-        bleManager.startScan(); // Start scanning for admin / users
+
+                    public void onPresenceUpdate(Map<String, String> liveUsers) {
+                        // optional: persist presence if needed
+                    }
+                }
+        );
+
+        // Start scanner so device participates in mesh
+        bleManager.startScanning();
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (bleManager != null) {
-            bleManager.stopScan();
-        }
+        if (bleManager != null) bleManager.shutdown();
     }
 
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
-        return null; // Not binding
+        return null;
     }
 
-    private void createNotificationChannel() {
+    private void createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel serviceChannel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "NOVA BLE Service",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            serviceChannel.setDescription("Foreground service for BLE scanning and relay");
-
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(serviceChannel);
-            }
+            NotificationChannel chan = new NotificationChannel(CHANNEL_ID,
+                    "NOVA BLE User Service", NotificationManager.IMPORTANCE_LOW);
+            chan.setDescription("Foreground service to keep BLE mesh alive");
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null) nm.createNotificationChannel(chan);
         }
     }
 }

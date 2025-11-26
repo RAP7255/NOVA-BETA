@@ -1,251 +1,219 @@
 package com.example.nova.ble;
 
 import android.Manifest;
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanFilter;
-import android.bluetooth.le.ScanResult;
-import android.bluetooth.le.ScanSettings;
 import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanSettings;
+import android.bluetooth.le.ScanResult;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.ParcelUuid;
 import android.util.Log;
+import android.util.SparseArray;
 
 import androidx.core.content.ContextCompat;
 
 import com.example.nova.model.MeshMessage;
-import com.example.nova.model.Utils;
 
-import org.json.JSONException;
+import java.nio.ByteBuffer;
+import java.util.HashMap;
 
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-
-/**
- * BluetoothScanner (backward-compatible version)
- * - Handles small (ALERT/PRESENCE) + chunked MeshMessages
- * - Compatible with API 21+
- */
 public class BluetoothScanner {
 
     private static final String TAG = "BluetoothScanner";
-    private static final UUID RAW_UUID = UUID.fromString("0000FEED-0000-1000-8000-00805F9B34FB");
+    private static final String RAW_TAG = "RAW_AD";
 
-    private final Context context;
+    private final Context ctx;
     private final BluetoothLeScanner scanner;
-    private final ParcelUuid SERVICE_UUID = new ParcelUuid(RAW_UUID);
-    private final Handler handler;
-    private static final int REASSEMBLY_TIMEOUT_MS = 6000;
-
-    // Data maps
-    private final Map<String, ReassemblyBuffer> buffers = new ConcurrentHashMap<>();
-    private final Map<String, Runnable> cleanupRunnables = new ConcurrentHashMap<>();
-
     private BluetoothScannerListener listener;
 
-    public BluetoothScanner(Context context, BluetoothScannerListener listener) {
-        this.context = context.getApplicationContext();
-        BluetoothManager btManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        BluetoothAdapter adapter = (btManager != null) ? btManager.getAdapter() : null;
-        this.scanner = (adapter != null && adapter.isEnabled()) ? adapter.getBluetoothLeScanner() : null;
-        this.handler = new Handler(Looper.getMainLooper());
-        this.listener = listener;
+    // ============================
+    // NEW: Prevent duplicate GATT fetch calls
+    // ============================
+    private long lastFetchId = -1;
+    private long lastFetchTime = 0;
+
+    private boolean shouldFetch(long id) {
+        long now = System.currentTimeMillis();
+
+        // suppress duplicates for 2500 ms
+        if (id == lastFetchId && (now - lastFetchTime) < 2500) {
+            return false;
+        }
+
+        lastFetchId = id;
+        lastFetchTime = now;
+        return true;
     }
 
-    public void setListener(BluetoothScannerListener listener) {
-        this.listener = listener;
+    public BluetoothScanner(Context ctx, BluetoothScannerListener l) {
+        this.ctx = ctx.getApplicationContext();
+
+        BluetoothManager bm =
+                (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
+
+        if (bm != null && bm.getAdapter() != null && bm.getAdapter().isEnabled())
+            scanner = bm.getAdapter().getBluetoothLeScanner();
+        else
+            scanner = null;
+
+        listener = l;
     }
 
-    public boolean isSupported() {
-        return scanner != null;
-    }
+    public void setListener(BluetoothScannerListener l) { listener = l; }
+    public boolean isSupported() { return scanner != null; }
 
-    /** ✅ Safe scan start with full permission checks */
+    // ========================================================
+    // START SCAN
+    // ========================================================
     public void startScan() {
-        if (scanner == null) {
-            Log.w(TAG, "❌ BLE scanner not available");
-            return;
-        }
+        if (scanner == null) return;
 
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN)
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_SCAN)
                 != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "🚫 Missing BLUETOOTH_SCAN permission");
+            Log.w(TAG, "SCAN permission missing");
             return;
         }
-
-        List<ScanFilter> filters = new ArrayList<>();
-        filters.add(new ScanFilter.Builder().setServiceUuid(SERVICE_UUID).build());
 
         ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+                .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
+                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
                 .build();
 
         try {
-            scanner.startScan(filters, settings, scanCallback);
-            Log.d(TAG, "🔍 BLE scanning started...");
-        } catch (SecurityException se) {
-            Log.e(TAG, "⚠️ Permission denied for BLE scan", se);
+            scanner.startScan(null, settings, scanCallback);
+            Log.d(TAG, "🔍 BLE Scan Started");
         } catch (Exception e) {
-            Log.e(TAG, "startScan failed: " + e.getMessage(), e);
+            Log.e(TAG, "scan start error", e);
         }
     }
 
-    /** ✅ Safe stop scan with cleanup */
     public void stopScan() {
         if (scanner == null) return;
-
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN)
-                != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "🚫 Missing BLUETOOTH_SCAN permission to stop");
-            return;
-        }
-
-        try {
-            scanner.stopScan(scanCallback);
-        } catch (SecurityException se) {
-            Log.e(TAG, "⚠️ Permission denied for BLE stop", se);
-        } catch (Exception e) {
-            Log.w(TAG, "stopScan failed: " + e.getMessage());
-        }
-
-        cleanupAll();
-        Log.d(TAG, "🛑 BLE scan stopped and buffers cleared");
+        try { scanner.stopScan(scanCallback); } catch (Exception ignored) {}
     }
 
+    // ========================================================
+    // SCAN CALLBACK
+    // ========================================================
     private final ScanCallback scanCallback = new ScanCallback() {
+
         @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            handleScanResult(result);
+        public void onScanResult(int type, ScanResult result) {
+            super.onScanResult(type, result);
+
+            if (result.getScanRecord() == null) return;
+
+            logRaw(result);
+
+            // 1) ESP32 SOS (Manufacturer data)
+            if (checkEsp32Manufacturer(result)) return;
+
+            // 2) Normal NOVA 10-byte service data
+            checkServiceData(result);
         }
     };
 
-    /** ✅ Handles simple + chunked BLE packets safely */
-    private void handleScanResult(ScanResult result) {
+    // ========================================================
+    // DEBUG RAW LOGGING
+    // ========================================================
+    private void logRaw(ScanResult result) {
+        Log.d(RAW_TAG, "RSSI: " + result.getRssi() +
+                " | Device: " + result.getDevice().getAddress() +
+                " | Name: " + result.getDevice().getName());
+
+        byte[] raw = result.getScanRecord().getBytes();
+        if (raw == null) return;
+
+        StringBuilder sb = new StringBuilder();
+        for (byte b : raw) sb.append(String.format("%02X ", b));
+        Log.d(RAW_TAG, "RAW_AD BYTES: " + sb);
+    }
+
+    // ========================================================
+    // ESP32 MANUFACTURER-SOS PARSER
+    // ========================================================
+    private boolean checkEsp32Manufacturer(ScanResult result) {
+
+        SparseArray<byte[]> mfMap = result.getScanRecord().getManufacturerSpecificData();
+        if (mfMap == null || mfMap.size() == 0) return false;
+
+        for (int i = 0; i < mfMap.size(); i++) {
+            int key = mfMap.keyAt(i);
+            byte[] data = mfMap.get(key);
+            if (data == null) continue;
+
+            String payload = new String(data);
+            if (!payload.startsWith("MESH:")) continue;
+
+            Log.d("ESP32-MESH", "PAYLOAD → " + payload);
+
+            String body = payload.substring(5);
+            String[] tokens = body.split(";");
+
+            HashMap<String, String> map = new HashMap<>();
+            for (String t : tokens) {
+                String[] p = t.split(":", 2);
+                if (p.length == 2) map.put(p[0], p[1]);
+            }
+
+            String type = map.get("TYPE");
+
+            if ("SOS".equalsIgnoreCase(type)) {
+                Log.d("ESP32-MESH", "🚨 SOS RECEIVED FROM ESP32");
+
+                if (listener != null)
+                    listener.onMessageReceived(MeshMessage.sosFromESP32());
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // ========================================================
+    // NOVA 10-BYTE SERVICE DATA PARSER
+    // ========================================================
+    private void checkServiceData(ScanResult result) {
+
+        byte[] data = result.getScanRecord().getServiceData(
+                new android.os.ParcelUuid(GattConstants.SERVICE_HEADER_UUID)
+        );
+
+        if (data == null || data.length < 10) return;
+
         try {
-            if (result == null || result.getScanRecord() == null) return;
+            ByteBuffer bb = ByteBuffer.wrap(data);
+            bb.get();                 // version
+            long id = bb.getLong();   // message id
+            int hop = bb.get() & 0xFF;
 
-            byte[] data = result.getScanRecord().getServiceData(SERVICE_UUID);
-            if (data == null || data.length == 0) return;
-
-            // 🧩 Simple packet check
-            String payload = new String(data, StandardCharsets.UTF_8);
-            if (payload.startsWith("ALERT:") || payload.startsWith("PRESENCE:") || payload.startsWith("SOS")) {
-                Log.d(TAG, "📩 Simple packet received: " + payload);
-
-                MeshMessage msg = new MeshMessage();
-                msg.payload = payload;
-                msg.sender = (result.getDevice() != null && result.getDevice().getName() != null)
-                        ? result.getDevice().getName() : "Unknown";
-
-                if (listener != null) listener.onMessageReceived(msg);
+            // THROTTLE duplicates 💥
+            if (!shouldFetch(id)) {
+                Log.d(TAG, "⏸ SKIP duplicate fetch for id=" + id);
                 return;
             }
 
-            // 🧠 Chunked packet reassembly
-            if (data.length < 12) return;
-            int idx = 0;
-            byte version = data[idx++];
+            MeshMessage msg = new MeshMessage();
+            msg.id = id;
+            msg.hopCount = hop;
+            msg.bluetoothDevice = result.getDevice();
+            msg.sender = result.getDevice().getName();
 
-            byte[] msgIdHash = new byte[8];
-            System.arraycopy(data, idx, msgIdHash, 0, 8);
-            idx += 8;
+            if (listener != null)
+                listener.onMessageReceived(msg);
 
-            int seqIndex = data[idx++] & 0xFF;
-            int total = data[idx++] & 0xFF;
-            int ttl = data[idx++] & 0xFF;
+            Log.d(TAG, "HEADER → id=" + id + " hop=" + hop);
 
-            int payloadLen = data.length - idx;
-            if (payloadLen <= 0) return;
-
-            String base64Part = new String(data, idx, payloadLen, StandardCharsets.UTF_8);
-            String key = Utils.bytesToHex(msgIdHash);
-
-            ReassemblyBuffer buf = buffers.get(key);
-            if (buf == null) {
-                buf = new ReassemblyBuffer(total);
-                buffers.put(key, buf);
-            }
-            buf.addChunk(seqIndex, base64Part);
-
-            Runnable prev = cleanupRunnables.remove(key);
-            if (prev != null) handler.removeCallbacks(prev);
-
-            Runnable cleanup = () -> {
-                buffers.remove(key);
-                cleanupRunnables.remove(key);
-                Log.d(TAG, "🧹 Timeout cleared buffer " + key);
-            };
-            cleanupRunnables.put(key, cleanup);
-            handler.postDelayed(cleanup, REASSEMBLY_TIMEOUT_MS);
-
-            if (buf.isComplete()) {
-                String concatenated = buf.rebuildConcatenated();
-                try {
-                    String json = MeshMessage.rebuildJsonFromBase64Concatenation(concatenated);
-                    MeshMessage msg = MeshMessage.fromJsonString(json);
-                    if (listener != null) listener.onMessageReceived(msg);
-                } catch (JSONException e) {
-                    Log.w(TAG, "⚠️ JSON parse failed: " + e.getMessage());
-                }
-
-                Runnable r = cleanupRunnables.remove(key);
-                if (r != null) handler.removeCallbacks(r);
-                buffers.remove(key);
-            }
-
-        } catch (SecurityException se) {
-            Log.e(TAG, "⚠️ BLE permission missing", se);
-        } catch (Throwable t) {
-            Log.e(TAG, "Error in handleScanResult", t);
-        }
-    }
-
-    private void cleanupAll() {
-        for (Runnable r : cleanupRunnables.values()) handler.removeCallbacks(r);
-        cleanupRunnables.clear();
-        buffers.clear();
-    }
-
-    private static class ReassemblyBuffer {
-        private final int totalParts;
-        private final String[] parts;
-        private int received = 0;
-
-        public ReassemblyBuffer(int totalParts) {
-            this.totalParts = Math.max(1, totalParts);
-            this.parts = new String[this.totalParts];
-        }
-
-        public synchronized void addChunk(int idx, String part) {
-            if (idx < 0 || idx >= totalParts) return;
-            if (parts[idx] == null) {
-                parts[idx] = part;
-                received++;
-            }
-        }
-
-        public synchronized boolean isComplete() {
-            return received >= totalParts;
-        }
-
-        public synchronized String rebuildConcatenated() {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < totalParts; i++) {
-                if (parts[i] != null) sb.append(parts[i]);
-            }
-            return sb.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "Header parse error", e);
         }
     }
 
     public interface BluetoothScannerListener {
-        void onMessageReceived(MeshMessage message);
+        void onMessageReceived(MeshMessage msg);
     }
 }

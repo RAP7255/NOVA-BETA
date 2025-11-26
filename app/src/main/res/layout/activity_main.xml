@@ -3,74 +3,88 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212">
+    android:background="?attr/background_color_dynamic">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp"
+        android:padding="20dp"
         android:gravity="center_horizontal">
 
-        <!-- Title -->
-        <TextView
-            android:id="@+id/tvTitle"
-            android:layout_width="wrap_content"
+        <RelativeLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="NOVA"
-            android:textColor="#FFFFFF"
-            android:textSize="26sp"
-            android:textStyle="bold"
-            android:layout_marginTop="12dp" />
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/tvTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_centerInParent="true"
+                android:text="NOVA"
+                android:textColor="?attr/colorPrimary"
+                android:textSize="32sp"
+                android:textStyle="bold" />
+
+            <Switch
+                android:id="@+id/theme_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:thumbTint="?attr/colorPrimary"
+                android:trackTint="?attr/text_secondary_dynamic"
+                android:contentDescription="Dark Mode Toggle" />
+        </RelativeLayout>
 
         <TextView
             android:id="@+id/tvSubtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Stay safe and connected"
-            android:textColor="#AAAAAA"
+            android:textColor="?attr/text_secondary_dynamic"
             android:textSize="14sp"
             android:gravity="center"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="24dp" />
 
-        <!-- Active User Count -->
         <TextView
             android:id="@+id/tvActiveCount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Active Users: 0"
-            android:textColor="#4CAF50"
-            android:textSize="16sp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:text="1,245 Active Users"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/status_dot"
+            android:backgroundTint="@color/status_green"
+            android:textSize="14sp"
             android:textStyle="bold"
-            android:layout_marginBottom="20dp"
-            android:gravity="center"
-            android:layout_gravity="center_horizontal" />
+            android:layout_marginBottom="32dp" />
 
-        <!-- SOS Button -->
         <Button
             android:id="@+id/btnSOS"
-            android:layout_width="160dp"
-            android:layout_height="160dp"
-            android:background="@drawable/round_button"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
+            android:background="@drawable/sos_button_shape"
             android:text="SOS"
-            android:textColor="#FFFFFF"
-            android:textSize="26sp"
+            android:textColor="?attr/text_primary_dynamic"
+            android:textSize="36sp"
             android:textStyle="bold"
-            android:layout_marginBottom="24dp"
+            android:layout_marginBottom="32dp"
             android:gravity="center"
-            android:elevation="8dp" />
+            android:elevation="12dp" />
 
-        <!-- Action Buttons Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center"
-            android:layout_marginBottom="28dp"
+            android:layout_marginBottom="40dp"
             android:weightSum="3">
 
-            <!-- Call Button -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -82,20 +96,20 @@
                     android:id="@+id/btnCall"
                     android:layout_width="56dp"
                     android:layout_height="56dp"
-                    android:backgroundTint="#F44336"
+                    android:background="@drawable/round_button"
+                    android:backgroundTint="@color/call_red"
                     android:src="@android:drawable/ic_menu_call"
-                    app:tint="#FFFFFF"
+                    app:tint="@color/text_primary_dark"
                     android:contentDescription="Call 911" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Call 911"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/text_primary_dynamic"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Location Button -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -107,20 +121,20 @@
                     android:id="@+id/btnLocation"
                     android:layout_width="56dp"
                     android:layout_height="56dp"
-                    android:backgroundTint="#FFC107"
+                    android:background="@drawable/round_button"
+                    android:backgroundTint="@color/location_orange"
                     android:src="@android:drawable/ic_menu_mylocation"
-                    app:tint="#FFFFFF"
+                    app:tint="@color/text_primary_dark"
                     android:contentDescription="Location" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Location"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/text_primary_dynamic"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Contacts Button -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -132,70 +146,70 @@
                     android:id="@+id/btnContacts"
                     android:layout_width="56dp"
                     android:layout_height="56dp"
-                    android:backgroundTint="#424242"
+                    android:background="@drawable/round_button"
+                    android:backgroundTint="@color/contacts_blue"
                     android:src="@android:drawable/ic_menu_myplaces"
-                    app:tint="#FFFFFF"
+                    app:tint="@color/text_primary_dark"
                     android:contentDescription="Contacts" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Contacts"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/text_primary_dynamic"
                     android:textSize="12sp" />
             </LinearLayout>
 
         </LinearLayout>
 
-        <!-- System Status -->
-        <LinearLayout
+        <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:background="#1E1E1E"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="16dp"
-            android:layout_marginTop="8dp"
-            android:elevation="2dp"
-            android:clipToOutline="true"
-            android:layout_gravity="center_horizontal"
-            android:backgroundTintMode="src_atop">
+            app:cardCornerRadius="8dp"
+            app:cardElevation="4dp"
+            app:cardBackgroundColor="?attr/card_background_dynamic"
+            android:layout_marginBottom="24dp">
 
-            <View
-                android:layout_width="12dp"
-                android:layout_height="12dp"
-                android:background="@drawable/green_dot"
-                android:layout_marginEnd="8dp" />
-
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="System Active"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp" />
+                android:orientation="horizontal"
+                android:padding="16dp"
+                android:gravity="center_vertical">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Online"
-                android:textColor="#4CAF50"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/status_dot"
+                    android:layout_marginEnd="12dp" />
 
-        <!-- Recent Alerts Header -->
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="System Active"
+                    android:textColor="?attr/text_primary_dynamic"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Online"
+                    android:textColor="@color/status_green"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Recent Alerts"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:textColor="?attr/text_primary_dynamic"
+            android:textSize="20sp"
             android:textStyle="bold"
-            android:layout_marginBottom="12dp" />
+            android:layout_marginBottom="16dp" />
 
-        <!-- RecyclerView for messages -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/messagesRecyclerView"
             android:layout_width="match_parent"

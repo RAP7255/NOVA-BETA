@@ -3,52 +3,48 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.nova">
 
-    <!-- ======================= -->
-    <!-- Bluetooth / BLE Permissions -->
-    <!-- ======================= -->
+    <!-- =========================================================
+         BLUETOOTH + LOCATION PERMISSIONS (All Android versions)
+         ========================================================= -->
+
+    <!-- Android 12+ explicit Bluetooth permissions -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <!-- Legacy compatibility for Android < 12 -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
 
-    <!-- Android 12+ Granular Bluetooth Permissions -->
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation"
-        android:required="false" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_CONNECT"
-        android:required="false" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_ADVERTISE"
-        android:required="false" />
-
-    <!-- Location (required for BLE scanning on Android 11 and below) -->
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
+    <!-- Needed for BLE scanning on all devices -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         tools:ignore="CoarseFineLocation" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Foreground Service Permissions (Android 14 Compliance) -->
+    <!-- Android 10+ foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
-    <!-- Notifications (Android 13+) -->
+    <!-- Android 14+ split foreground service types -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <!-- Android 13+ notifications permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Network Access -->
+    <!-- Debug + optional network use -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- ======================= -->
-    <!-- Hardware Feature Declarations -->
-    <!-- ======================= -->
+    <!-- =========================================================
+         HARDWARE FEATURES
+         ========================================================= -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
 
-    <!-- ======================= -->
-    <!-- Application -->
-    <!-- ======================= -->
+    <!-- =========================================================
+         APPLICATION
+         ========================================================= -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -56,39 +52,41 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.NOVA"
-        tools:targetApi="31"
+        tools:targetApi="34">
 
-        >
-
-        <!-- Main Activity -->
+        <!-- MAIN ACTIVITY (LAUNCHER) -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
 
-        <!-- BLE Presence Test Activity -->
-        <activity
-            android:name=".PresenceTestActivity"
+        <!-- Other internal screens (safe: exported=false) -->
+        <activity android:name=".PresenceTestActivity" android:exported="false" />
+        <activity android:name=".AlertActivity" android:exported="false" />
+        <activity android:name=".SOSActivity" android:exported="false" />
+
+        <!-- =====================================================
+             USER FOREGROUND BLE SERVICE (NEW)
+             ===================================================== -->
+        <service
+            android:name=".service.BLEForegroundService"
             android:exported="false"
-            android:label="Presence Test" />
+            android:enabled="true"
+            android:foregroundServiceType="connectedDevice|location" />
 
-        <!-- Other Activities -->
-        <activity
-            android:name=".AlertActivity"
-            android:exported="false" />
-        <activity
-            android:name=".SOSActivity"
-            android:exported="false" />
-
-        <!-- Foreground BLE Mesh Service -->
+        <!-- Existing MeshService (keep enabled) -->
         <service
             android:name=".service.MeshService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
+
     </application>
+
 </manifest>

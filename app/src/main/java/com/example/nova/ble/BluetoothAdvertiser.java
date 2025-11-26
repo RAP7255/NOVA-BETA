@@ -9,145 +9,149 @@ import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
-import android.os.Looper;
 import android.os.ParcelUuid;
 import android.util.Log;
 
-import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.example.nova.model.MeshMessage;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.nio.ByteBuffer;
 
-/**
- * BLE Advertiser that automatically splits payloads into BLE-safe chunks.
- */
 public class BluetoothAdvertiser {
-    private static final String TAG = "BluetoothAdvertiser";
-    private final BluetoothLeAdvertiser advertiser;
-    private final Handler handler;
-    private final ParcelUuid SERVICE_UUID = new ParcelUuid(UUID.fromString("0000FEED-0000-1000-8000-00805F9B34FB"));
-    private final int ADVERTISE_DURATION_MS = 1000;
-    private final int MAX_BLE_PAYLOAD = 20; // max bytes per BLE advertisement for service data
-    private final Context context;
 
-    public BluetoothAdvertiser(Context context) {
-        this.context = context;
-        BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        BluetoothAdapter adapter = (bluetoothManager != null) ? bluetoothManager.getAdapter() : null;
-        advertiser = (adapter != null && adapter.isEnabled()) ? adapter.getBluetoothLeAdvertiser() : null;
-        handler = new Handler(Looper.getMainLooper());
+    private static final String TAG = "BluetoothAdvertiser";
+
+    private final BluetoothLeAdvertiser advertiser;
+    private final Context context;
+    private final Handler handler = new Handler();   // ⭐ REQUIRED
+
+    private final ParcelUuid SERVICE_UUID =
+            new ParcelUuid(GattConstants.SERVICE_HEADER_UUID);
+
+    public BluetoothAdvertiser(Context ctx) {
+        this.context = ctx.getApplicationContext();
+
+        BluetoothManager btManager =
+                (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+
+        BluetoothAdapter adapter = btManager != null ? btManager.getAdapter() : null;
+
+        if (adapter != null && adapter.isEnabled())
+            advertiser = adapter.getBluetoothLeAdvertiser();
+        else
+            advertiser = null;
     }
 
     public boolean isSupported() {
         return advertiser != null;
     }
 
-    /**
-     * Splits a MeshMessage into BLE-safe chunks and advertises them sequentially.
-     */
-    public void advertiseMeshMessage(final MeshMessage msg, final AdvertiseCompleteCallback callback) throws Exception {
-        if (advertiser == null) {
-            if (callback != null) callback.onFailure("Advertiser not available");
-            return;
-        }
+    private boolean hasAdvertisePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
+                    == PackageManager.PERMISSION_GRANTED;
 
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
-                != PackageManager.PERMISSION_GRANTED) {
-            if (callback != null) callback.onFailure("Permission not granted: BLUETOOTH_ADVERTISE");
-            return;
-        }
-
-        // Determine safe chunk size
-        final int overhead = 1 + 8 + 1 + 1 + 1; // version + msgIdHash + idx + total + ttl
-        final int safeChunkSize = MAX_BLE_PAYLOAD - overhead;
-        List<String> chunks = msg.chunkedBase64(safeChunkSize);
-
-        final byte versionByte = (byte) MeshMessage.VERSION;
-        final byte[] msgIdHash = MeshMessage.msgIdHash8(msg.id);
-
-        advertiseChunkAtIndex(chunks, 0, versionByte, msg.ttl, msgIdHash, callback);
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
-    private void advertiseChunkAtIndex(final List<String> chunks,
-                                       final int idx,
-                                       final byte versionByte,
-                                       final int ttl,
-                                       final byte[] msgIdHash,
-                                       final AdvertiseCompleteCallback callback) {
-        if (idx >= chunks.size()) {
-            if (callback != null) callback.onComplete();
+    // ====================================================================
+    // PUBLIC API (SAFE SINGLE ADVERTISEMENT)
+    // ====================================================================
+    public void advertiseMeshMessage(
+            MeshMessage msg,
+            AdvertiseCompleteCallback callback
+    ) {
+        advertiseInternal(msg, callback);
+    }
+
+    // ====================================================================
+    // INTERNAL — ALWAYS CONNECTABLE, SAFE FOR REDMI / ONEPLUS
+    // ====================================================================
+    private void advertiseInternal(
+            MeshMessage msg,
+            AdvertiseCompleteCallback callback
+    ) {
+
+        if (advertiser == null) {
+            if (callback != null) callback.onFailure("advertiser null");
             return;
         }
 
-        final String chunkStr = chunks.get(idx);
-        final byte[] payload = MeshMessage.buildChunkPayload(versionByte, msgIdHash, idx, chunks.size(), ttl, chunkStr);
-
-        // Safety check
-        if (payload.length > MAX_BLE_PAYLOAD) {
-            Log.e(TAG, "Chunk payload too large! size=" + payload.length + " bytes, max=" + MAX_BLE_PAYLOAD);
-            if (callback != null) callback.onFailure("Chunk too large: " + payload.length + " bytes");
+        if (!hasAdvertisePermission()) {
+            if (callback != null) callback.onFailure("No ADVERTISE permission");
             return;
         }
-
-        AdvertiseSettings settings = new AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                .setConnectable(false)
-                .build();
-
-        AdvertiseData data = new AdvertiseData.Builder()
-                .addServiceUuid(SERVICE_UUID)
-                .addServiceData(SERVICE_UUID, payload)
-                .setIncludeDeviceName(false)
-                .build();
-
-        final AdvertiseCallback advCallback = new AdvertiseCallback() {
-            @Override
-            public void onStartSuccess(AdvertiseSettings settingsInEffect) {
-                super.onStartSuccess(settingsInEffect);
-                Log.d(TAG, "Advert started chunk " + idx + "/" + (chunks.size() - 1) + ", size=" + payload.length);
-
-                // Delay and advertise next chunk
-                handler.postDelayed(() -> {
-                    try {
-                        if (advertiser != null &&
-                                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE)
-                                        == PackageManager.PERMISSION_GRANTED) {
-                            advertiser.stopAdvertising(this);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error stopping advertiser", e);
-                    }
-                    advertiseChunkAtIndex(chunks, idx + 1, versionByte, ttl, msgIdHash, callback);
-                }, ADVERTISE_DURATION_MS);
-            }
-
-            @Override
-            public void onStartFailure(int errorCode) {
-                super.onStartFailure(errorCode);
-                Log.e(TAG, "Advert failed: " + errorCode);
-                if (callback != null) callback.onFailure("Advert failed code: " + errorCode);
-            }
-        };
 
         try {
+
+            // -------------------------------
+            // HEADER (10 bytes)
+            // -------------------------------
+            byte[] header = ByteBuffer.allocate(10)
+                    .put((byte) MeshMessage.VERSION)
+                    .putLong(msg.id)
+                    .put((byte) msg.hopCount)
+                    .array();
+
+            AdvertiseData data = new AdvertiseData.Builder()
+                    .addServiceUuid(SERVICE_UUID)
+                    .addServiceData(SERVICE_UUID, header)
+                    .setIncludeDeviceName(false)
+                    .build();
+
+            // -------------------------------
+            // ADVERTISE SETTINGS (ALWAYS CONNECTABLE)
+            // -------------------------------
+            AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                    .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                    .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                    .setConnectable(true)            // ⭐ CRITICAL FIX
+                    .build();
+
+            // -------------------------------
+            // CALLBACK
+            // -------------------------------
+            AdvertiseCallback advCallback = new AdvertiseCallback() {
+                @Override
+                public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+                    Log.i(TAG, "Advertising OK id=" + msg.id);
+                    if (callback != null) callback.onComplete();
+                }
+
+                @Override
+                public void onStartFailure(int errorCode) {
+                    Log.e(TAG, "Advertising FAIL code=" + errorCode);
+                    if (callback != null) callback.onFailure("Fail=" + errorCode);
+                }
+            };
+
+            // -------------------------------
+            // START ADVERTISING (ONLY ONCE)
+            // -------------------------------
             advertiser.startAdvertising(settings, data, advCallback);
+
+            // -------------------------------
+            // STOP AFTER 350 ms (SAFE)
+            // -------------------------------
+            handler.postDelayed(() -> {
+                try {
+                    advertiser.stopAdvertising(advCallback);
+                } catch (Exception ignore) {}
+            }, 350);
+
         } catch (Exception e) {
-            Log.e(TAG, "startAdvertising exception: " + e.getMessage(), e);
-            if (callback != null) callback.onFailure("startAdvertising exception: " + e.getMessage());
+            Log.e(TAG, "startAdvertising err=" + e.getMessage());
+            if (callback != null) callback.onFailure("Exception: " + e.getMessage());
         }
     }
 
+    // CALLBACK INTERFACE
     public interface AdvertiseCompleteCallback {
         void onComplete();
         void onFailure(String reason);
     }
 }
-
-
-
-
