@@ -26,7 +26,8 @@ public class BluetoothAdvertiser {
 
     private final BluetoothLeAdvertiser advertiser;
     private final Context context;
-    private final Handler handler = new Handler();   // ⭐ REQUIRED
+    private final Handler handler = new Handler();
+    private AdvertiseCallback lastCallback;  // ⭐ prevents duplicate failures
 
     private final ParcelUuid SERVICE_UUID =
             new ParcelUuid(GattConstants.SERVICE_HEADER_UUID);
@@ -34,10 +35,10 @@ public class BluetoothAdvertiser {
     public BluetoothAdvertiser(Context ctx) {
         this.context = ctx.getApplicationContext();
 
-        BluetoothManager btManager =
-                (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-
-        BluetoothAdapter adapter = btManager != null ? btManager.getAdapter() : null;
+        BluetoothManager manager =
+                (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
+        BluetoothAdapter adapter =
+                (manager != null) ? manager.getAdapter() : null;
 
         if (adapter != null && adapter.isEnabled())
             advertiser = adapter.getBluetoothLeAdvertiser();
@@ -59,7 +60,7 @@ public class BluetoothAdvertiser {
     }
 
     // ====================================================================
-    // PUBLIC API (SAFE SINGLE ADVERTISEMENT)
+    // PUBLIC ENTRY POINT
     // ====================================================================
     public void advertiseMeshMessage(
             MeshMessage msg,
@@ -69,87 +70,118 @@ public class BluetoothAdvertiser {
     }
 
     // ====================================================================
-    // INTERNAL — ALWAYS CONNECTABLE, SAFE FOR REDMI / ONEPLUS
+    // INTERNAL ADVERTISING (OEM-STABLE VERSION)
     // ====================================================================
     private void advertiseInternal(
             MeshMessage msg,
             AdvertiseCompleteCallback callback
     ) {
-
         if (advertiser == null) {
-            if (callback != null) callback.onFailure("advertiser null");
+            if (callback != null) callback.onFailure("BLE advertiser null");
             return;
         }
 
         if (!hasAdvertisePermission()) {
-            if (callback != null) callback.onFailure("No ADVERTISE permission");
+            if (callback != null) callback.onFailure("Missing ADVERTISE permission");
             return;
         }
 
         try {
 
-            // -------------------------------
-            // HEADER (10 bytes)
-            // -------------------------------
+            // ====================================================
+            // BUILD 10-BYTE HEADER PAYLOAD
+            // ====================================================
             byte[] header = ByteBuffer.allocate(10)
-                    .put((byte) MeshMessage.VERSION)
-                    .putLong(msg.id)
-                    .put((byte) msg.hopCount)
+                    .put((byte) MeshMessage.VERSION)  // version
+                    .putLong(msg.id)                 // message id
+                    .put((byte) msg.hopCount)        // hop
                     .array();
 
+            // ====================================================
+            // ADVERTISE DATA (MUST be < 31 bytes)
+            // ====================================================
             AdvertiseData data = new AdvertiseData.Builder()
                     .addServiceUuid(SERVICE_UUID)
                     .addServiceData(SERVICE_UUID, header)
                     .setIncludeDeviceName(false)
+                    .setIncludeTxPowerLevel(false)   // ⭐ CRITICAL: prevents OEM overflow
                     .build();
 
-            // -------------------------------
-            // ADVERTISE SETTINGS (ALWAYS CONNECTABLE)
-            // -------------------------------
+            // ====================================================
+            // SETTINGS — OEM SAFE
+            // ====================================================
             AdvertiseSettings settings = new AdvertiseSettings.Builder()
                     .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
                     .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                    .setConnectable(true)            // ⭐ CRITICAL FIX
+                    .setConnectable(true)            // required for Android 12+
+                    .setTimeout(0)                   // unlimited
                     .build();
 
-            // -------------------------------
-            // CALLBACK
-            // -------------------------------
-            AdvertiseCallback advCallback = new AdvertiseCallback() {
+            // ====================================================
+            // CALLBACK — REUSABLE & SAFE
+            // ====================================================
+            lastCallback = new AdvertiseCallback() {
+
                 @Override
                 public void onStartSuccess(AdvertiseSettings settingsInEffect) {
-                    Log.i(TAG, "Advertising OK id=" + msg.id);
+                    Log.i(TAG, "Advertising START OK → id=" + msg.id);
                     if (callback != null) callback.onComplete();
                 }
 
                 @Override
                 public void onStartFailure(int errorCode) {
-                    Log.e(TAG, "Advertising FAIL code=" + errorCode);
-                    if (callback != null) callback.onFailure("Fail=" + errorCode);
+                    Log.e(TAG, "Advertising FAIL: code=" + errorCode);
+
+                    String reason;
+
+                    switch (errorCode) {
+                        case ADVERTISE_FAILED_DATA_TOO_LARGE:
+                            reason = "DATA_TOO_LARGE";
+                            break;
+                        case ADVERTISE_FAILED_TOO_MANY_ADVERTISERS:
+                            reason = "TOO_MANY_ADVERTISERS";
+                            break;
+                        case ADVERTISE_FAILED_ALREADY_STARTED:
+                            reason = "ALREADY_STARTED";
+                            break;
+                        case ADVERTISE_FAILED_INTERNAL_ERROR:
+                            reason = "INTERNAL_ERROR";
+                            break;
+                        case ADVERTISE_FAILED_FEATURE_UNSUPPORTED:
+                            reason = "UNSUPPORTED";
+                            break;
+                        default:
+                            reason = "UNKNOWN";
+                    }
+
+                    if (callback != null) callback.onFailure(reason);
                 }
             };
 
-            // -------------------------------
-            // START ADVERTISING (ONLY ONCE)
-            // -------------------------------
-            advertiser.startAdvertising(settings, data, advCallback);
+            // ====================================================
+            // START ADVERTISING — SINGLE START
+            // ====================================================
+            advertiser.startAdvertising(settings, data, lastCallback);
 
-            // -------------------------------
-            // STOP AFTER 350 ms (SAFE)
-            // -------------------------------
+            // ====================================================
+            // STOP after 500 ms (OEM optimal)
+            // Xiaomi/Samsung/Realme require >400ms for detection
+            // ====================================================
             handler.postDelayed(() -> {
                 try {
-                    advertiser.stopAdvertising(advCallback);
+                    advertiser.stopAdvertising(lastCallback);
                 } catch (Exception ignore) {}
-            }, 350);
+            }, 500);
 
         } catch (Exception e) {
-            Log.e(TAG, "startAdvertising err=" + e.getMessage());
-            if (callback != null) callback.onFailure("Exception: " + e.getMessage());
+            Log.e(TAG, "Advertise exception " + e);
+            if (callback != null) callback.onFailure("EXCEPTION:" + e.getMessage());
         }
     }
 
+    // ====================================================
     // CALLBACK INTERFACE
+    // ====================================================
     public interface AdvertiseCompleteCallback {
         void onComplete();
         void onFailure(String reason);

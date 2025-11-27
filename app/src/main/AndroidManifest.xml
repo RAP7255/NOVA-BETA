@@ -4,43 +4,43 @@
     package="com.example.nova">
 
     <!-- =========================================================
-         BLUETOOTH + LOCATION PERMISSIONS (All Android versions)
+         BLUETOOTH + LOCATION PERMISSIONS
          ========================================================= -->
 
-    <!-- Android 12+ explicit Bluetooth permissions -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
-    <!-- Legacy compatibility for Android < 12 -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
 
-    <!-- Needed for BLE scanning on all devices -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         tools:ignore="CoarseFineLocation" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Android 10+ foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <!-- Android 14+ split foreground service types -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- Android 13+ notifications permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Debug + optional network use -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- BOOT PERMISSION MUST BE HERE, NOT INSIDE APPLICATION -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- =========================================================
          HARDWARE FEATURES
          ========================================================= -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
-    <uses-feature android:name="android.hardware.location" android:required="false" />
+
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
 
     <!-- =========================================================
          APPLICATION
@@ -54,7 +54,7 @@
         android:theme="@style/Theme.NOVA"
         tools:targetApi="34">
 
-        <!-- MAIN ACTIVITY (LAUNCHER) -->
+        <!-- MAIN ACTIVITY -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -63,29 +63,36 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
         </activity>
 
-        <!-- Other internal screens (safe: exported=false) -->
+        <!-- INTERNAL ACTIVITIES -->
         <activity android:name=".PresenceTestActivity" android:exported="false" />
         <activity android:name=".AlertActivity" android:exported="false" />
         <activity android:name=".SOSActivity" android:exported="false" />
 
-        <!-- =====================================================
-             USER FOREGROUND BLE SERVICE (NEW)
-             ===================================================== -->
+        <!-- MAIN MESH SERVICE -->
+        <service
+            android:name=".service.MeshService"
+            android:exported="false"
+            android:enabled="true"
+            android:foregroundServiceType="connectedDevice|dataSync|location" />
+
+        <!-- BLE FOREGROUND SERVICE -->
         <service
             android:name=".service.BLEForegroundService"
             android:exported="false"
             android:enabled="true"
             android:foregroundServiceType="connectedDevice|location" />
 
-        <!-- Existing MeshService (keep enabled) -->
-        <service
-            android:name=".service.MeshService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice|location" />
+        <!-- BOOT RECEIVER -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

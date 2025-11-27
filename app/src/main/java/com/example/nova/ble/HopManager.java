@@ -26,8 +26,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * FINAL - BLE Mesh Hop Manager
- * Patched for OnePlus + BLE Connectable-only TX
+ * FINAL FIXED HopManager
+ * - Works with fixed GattServer.java
+ * - OEM safe (Xiaomi, Samsung, Realme)
+ * - GATT-FETCH stable
+ * - Race-condition safe (immediate + delayed NOTIFY)
  */
 public class HopManager implements BluetoothScanner.BluetoothScannerListener {
 
@@ -49,7 +52,9 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     private final PayloadGattClient gattClient;
     private final Context ctx;
 
+    // 🔵 GATT server reference used for NOTIFY callbacks
     private GattServer gattServer;
+
     private HopListener listener;
     private volatile boolean running = false;
 
@@ -62,7 +67,9 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     public boolean isRunning() { return running; }
     public void setListener(HopListener l) { this.listener = l; }
 
+    // ----------------------------------------------------------
     // Constructor
+    // ----------------------------------------------------------
     public HopManager(Context ctx,
                       MessageCache cache,
                       BluetoothAdvertiser advertiser,
@@ -82,6 +89,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         hopManagerInstance = this;
 
         startGattServerIfNeeded();
+
         handler.postDelayed(this::cleanupTask, CLEAN_INTERVAL_MS);
 
         Log.d(TAG, "HopManager INIT ✔");
@@ -92,15 +100,14 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     private boolean hasScanPermission() {
-        return Build.VERSION.SDK_INT >= 31
-                ? check(Manifest.permission.BLUETOOTH_SCAN)
-                : check(Manifest.permission.ACCESS_FINE_LOCATION);
+        return Build.VERSION.SDK_INT >= 31 ?
+                check(Manifest.permission.BLUETOOTH_SCAN) :
+                check(Manifest.permission.ACCESS_FINE_LOCATION);
     }
 
     private boolean hasConnectPermission() {
-        return Build.VERSION.SDK_INT >= 31
-                ? check(Manifest.permission.BLUETOOTH_CONNECT)
-                : true;
+        return Build.VERSION.SDK_INT >= 31 ?
+                check(Manifest.permission.BLUETOOTH_CONNECT) : true;
     }
 
     // ----------------------------------------------------------
@@ -121,7 +128,10 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             payloadMap.put(m.id, encrypted);
             payloadTimestamps.put(m.id, now);
 
-            // FIX: Always connectable (handled in BluetoothAdvertiser)
+            // NOTIFY subscribed devices
+            if (gattServer != null)
+                gattServer.notifyAllSubscribed(encrypted);
+
             advertiser.advertiseMeshMessage(m, null);
 
         } catch (Exception e) {
@@ -130,7 +140,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     // ----------------------------------------------------------
-    // START / STOP
+    // START / STOP MESH
     // ----------------------------------------------------------
     public void start() {
 
@@ -151,13 +161,19 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     public void stop() {
-        if (scanner != null) scanner.stopScan();
-        stopGattServerIfNeeded();
+        try {
+            if (scanner != null) scanner.stopScan();
+        } catch (Exception ignored) {}
+
+        stopGattServer();
         running = false;
+        hopManagerInstance = null;
+
+        Log.d(TAG, "HopManager stopped");
     }
 
     // ----------------------------------------------------------
-    // Incoming HEADER
+    // HEADER RECEIVED
     // ----------------------------------------------------------
     @Override
     public void onMessageReceived(MeshMessage header) {
@@ -165,143 +181,70 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         if (header == null) return;
 
         long id = header.id;
-        String key = String.valueOf(id);
 
-        if (cache.contains(key)) return;
-        cache.put(key);
+        if (cache.contains(String.valueOf(id))) return;
+        cache.put(String.valueOf(id));
 
         Log.d("MESH_DEBUG", "🟨 HEADER RECEIVED → id=" + id
                 + " hop=" + header.hopCount
-                + " device=" + (header.bluetoothDevice != null ? header.bluetoothDevice.getAddress() : "null"));
-
+                + " device=" + (header.bluetoothDevice != null ?
+                header.bluetoothDevice.getAddress() : "null"));
 
         byte[] cipher = payloadMap.get(id);
 
-        if (cipher == null) {
-            if (header.bluetoothDevice != null)
-                fetchPayloadFromDevice(header.bluetoothDevice, id);
+        if (cipher != null) {
+            processDecrypted(header, cipher);
             return;
         }
 
-        processDecrypted(header, cipher);
+        // Fetch from remote GATT
+        if (header.bluetoothDevice != null)
+            fetchPayloadFromDevice(header.bluetoothDevice, id);
     }
 
     // ----------------------------------------------------------
-    // DECRYPT
+    // PROCESS CIPHERTEXT → DECRYPT → CALLBACK → REBROADCAST
     // ----------------------------------------------------------
     private void processDecrypted(MeshMessage header, byte[] ciphertext) {
 
+        if (ciphertext == null) return;
+
+        // Store ciphertext
+        payloadMap.put(header.id, ciphertext);
+        payloadTimestamps.put(header.id, System.currentTimeMillis());
+
+        // ⭐ Notify subscribed devices (race-condition safe)
+        if (gattServer != null)
+            gattServer.notifyAllSubscribed(ciphertext);
+
         Log.d("MESH_DEBUG", "🟧 DECRYPT-START → id=" + header.id);
-        Log.d("MESH_DEBUG", "🟥 CIPHERTEXT (" + (ciphertext != null ? ciphertext.length : 0) + " bytes) id=" + header.id);
 
         try {
-            if (ciphertext == null) {
-                Log.w("MESH_DEBUG", "ciphertext is null for id=" + header.id);
-                return;
-            }
+            String asString = null;
+            try { asString = new String(ciphertext, "UTF-8"); } catch (Exception ignore) {}
 
-            // --------------------------------------------------------
-            // 🔵 1. Detect ESP plaintext (non-encrypted)
-            // --------------------------------------------------------
-            String asString;
-            try {
-                asString = new String(ciphertext, "UTF-8");
-            } catch (Exception ex) {
-                asString = null;
-            }
+            // ---------- ESP SPECIAL PARSE ----------
+            if (asString != null &&
+                    (asString.startsWith("CIPHERTEXT_FROM_ESP32") ||
+                            asString.startsWith("MESH:TYPE:"))) {
 
-            if (asString != null && (asString.startsWith("CIPHERTEXT_FROM_ESP32") ||
-                    asString.startsWith("MESH:TYPE:"))) {
+                MeshMessage m = parseEspPlaintext(header, asString);
+                if (m == null) return;
 
-                Log.d("MESH_DEBUG", "🟩 ESP-PLAINTEXT DETECTED → " + asString);
-
-                // --------------------------------------------------------
-                // Parse "KEY=VALUE" or "KEY:VALUE" pairs
-                // --------------------------------------------------------
-                java.util.Map<String, String> kv = new java.util.HashMap<>();
-                String[] parts = asString.split(";");
-                for (String part : parts) {
-                    if (part == null) continue;
-                    part = part.trim();
-                    if (part.isEmpty()) continue;
-
-                    int eq = part.indexOf('=');
-                    int col = part.indexOf(':');
-
-                    if (eq > 0) {
-                        kv.put(part.substring(0, eq).trim().toUpperCase(),
-                                part.substring(eq + 1).trim());
-                    } else if (col > 0) {
-                        kv.put(part.substring(0, col).trim().toUpperCase(),
-                                part.substring(col + 1).trim());
-                    }
-                }
-
-                // --------------------------------------------------------
-                // Sender (SRC field)
-                // --------------------------------------------------------
-                String sender = kv.get("SRC");
-                if (sender == null) sender = "ESP32";
-
-                // --------------------------------------------------------
-                // Message body (MSG field)
-                // --------------------------------------------------------
-                String msgText = kv.get("MSG");
-                if (msgText == null) msgText = asString;   // fallback
-
-                // --------------------------------------------------------
-                // UI timestamp (required)
-                // --------------------------------------------------------
-                String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
-                        .format(new Date());
-
-                // --------------------------------------------------------
-                // Build MeshMessage correctly using your class fields
-                // --------------------------------------------------------
-                MeshMessage m = new MeshMessage();
-
-                m.id = header.id;         // keep original ID
-                m.hopCount = header.hopCount;
-                m.sender = sender;
-                m.payload = msgText;
-                m.timestamp = ts;
-                m.encryptedPayload = null;        // ESP does not encrypt
-                m.bluetoothDevice = header.bluetoothDevice;
-
-                // --------------------------------------------------------
-                // IMPORTANT: Store ciphertext so we don't refetch (prevents timeouts)
-                // --------------------------------------------------------
-                payloadMap.put(m.id, ciphertext);
-                payloadTimestamps.put(m.id, System.currentTimeMillis());
-
-                // --------------------------------------------------------
-                // Deliver to UI/listener
-                // --------------------------------------------------------
                 if (listener != null)
                     listener.onNewMessage(m);
 
-                // --------------------------------------------------------
-                // Trigger user-facing notification for ESP alerts
-                // --------------------------------------------------------
                 NotificationHelper.showNotification(
-                        ctx,
-                        "Emergency Alert",
-                        m.sender + ": " + m.payload,
-                        null
+                        ctx, "ESP Alert", m.payload, null
                 );
 
-                // --------------------------------------------------------
-                // Rebroadcast raw ciphertext
-                // --------------------------------------------------------
                 if (m.hopCount < MAX_HOPS)
                     scheduleRebroadcast(m);
 
-                return;   // 🚨 stop here — do NOT AES decrypt
+                return;
             }
 
-            // --------------------------------------------------------
-            // 🔵 2. Normal AES decryption for phone→phone messages
-            // --------------------------------------------------------
+            // ---------- AES DECRYPT ----------
             byte[] aad = ByteBuffer.allocate(8).putLong(header.id).array();
             byte[] plain = CryptoUtil.decrypt(ciphertext, aad);
 
@@ -317,13 +260,40 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
                 scheduleRebroadcast(header);
 
         } catch (Exception e) {
-            Log.e("MESH_DEBUG", "❌ DECRYPT FAIL id=" + header.id + " error=" + e.getMessage());
+            Log.e("MESH_DEBUG", "❌ DECRYPT FAIL id=" + header.id + " error=" + e);
         }
     }
 
+    private MeshMessage parseEspPlaintext(MeshMessage header, String raw) {
+        try {
+            java.util.Map<String, String> map = new java.util.HashMap<>();
+            for (String part : raw.split(";")) {
+                int eq = part.indexOf('=');
+                int col = part.indexOf(':');
+                if (eq > 0)
+                    map.put(part.substring(0, eq).toUpperCase(), part.substring(eq + 1));
+                else if (col > 0)
+                    map.put(part.substring(0, col).toUpperCase(), part.substring(col + 1));
+            }
+
+            MeshMessage m = new MeshMessage();
+            m.id = header.id;
+            m.hopCount = header.hopCount;
+            m.sender = map.getOrDefault("SRC", "ESP32");
+            m.payload = map.getOrDefault("MSG", raw);
+            m.bluetoothDevice = header.bluetoothDevice;
+            m.timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+                    .format(new Date());
+            return m;
+
+        } catch (Exception e) {
+            Log.e("ESP_PARSE", "fail: " + e);
+            return null;
+        }
+    }
 
     // ----------------------------------------------------------
-    // OUTGOING USER MESSAGE (connectable)
+    // OUTGOING USER MESSAGE
     // ----------------------------------------------------------
     public MeshMessage sendOutgoing(String sender, int hop, String text) {
 
@@ -341,6 +311,10 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             payloadMap.put(m.id, m.encryptedPayload);
             payloadTimestamps.put(m.id, System.currentTimeMillis());
 
+            // ⭐ Immediately notify subscribed devices
+            if (gattServer != null)
+                gattServer.notifyAllSubscribed(m.encryptedPayload);
+
             startGattServerIfNeeded();
 
         } catch (Exception ex) {
@@ -349,8 +323,8 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         }
 
         advertiser.advertiseMeshMessage(m, null);
-
         Log.i(TAG, "OUTGOING id=" + m.id);
+
         return m;
     }
 
@@ -359,7 +333,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     // ----------------------------------------------------------
     private void scheduleRebroadcast(MeshMessage h) {
         handler.postDelayed(() -> rebroadcast(h),
-                80 + random.nextInt(200));
+                150 + random.nextInt(150));
     }
 
     private void rebroadcast(MeshMessage old) {
@@ -373,37 +347,71 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         if (cipher == null) return;
 
         m.encryptedPayload = cipher;
-
         advertiser.advertiseMeshMessage(m, null);
 
         Log.d(TAG, "REBROADCAST id=" + m.id + " hop=" + m.hopCount);
     }
 
     // ----------------------------------------------------------
-    // GATT SERVER
+    // GATT SERVER MANAGEMENT
     // ----------------------------------------------------------
+    private final Object gattLock = new Object();
+
     private void startGattServerIfNeeded() {
-        if (gattServer != null) return;
-        if (!hasConnectPermission()) return;
+        synchronized (gattLock) {
+            if (gattServer != null) return;
+            if (!hasConnectPermission()) return;
 
-        gattServer = new GattServer(ctx);
-        gattServer.start();
+            try {
+                gattServer = new GattServer(ctx);
+                gattServer.start();
+                Log.d(TAG, "GattServer started");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to start GattServer", e);
+                gattServer = null;
+            }
+        }
     }
 
-    private void stopGattServerIfNeeded() {
-        if (gattServer != null) gattServer.stop();
-        gattServer = null;
+    public void stopGattServer() {
+        synchronized (gattLock) {
+            if (gattServer != null) {
+                try {
+                    gattServer.stop();
+                    Log.d(TAG, "GattServer stopped");
+                } catch (Exception e) {
+                    Log.e(TAG, "Error stopping GattServer", e);
+                } finally {
+                    gattServer = null;
+                }
+            }
+        }
     }
 
     // ----------------------------------------------------------
-    // GATT FETCH
+    // REQUIRED BY GattServer
+    // ----------------------------------------------------------
+    public byte[] getStoredCiphertext(long id) {
+        try {
+            return payloadMap.get(id);
+        } catch (Exception e) {
+            Log.e("HopManager", "getStoredCiphertext error: " + e);
+            return null;
+        }
+    }
+
+    // ----------------------------------------------------------
+    // GATT FETCH w/ retry
     // ----------------------------------------------------------
     public void fetchPayloadFromDevice(BluetoothDevice dev, long id) {
 
         if (dev == null) return;
-        if (fetchingSet.putIfAbsent(id, true) != null) return;
 
-        // 🔵 Log: starting GATT fetch
+        synchronized (fetchingSet) {
+            if (fetchingSet.putIfAbsent(id, true) != null)
+                return;
+        }
+
         Log.d("MESH_DEBUG", "🟦 GATT-FETCH START → id=" + id
                 + " from " + dev.getAddress());
 
@@ -412,24 +420,19 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             @Override
             public void onPayload(byte[] cipher) {
 
-                // 🟩 Log: Cipher received
-                Log.d("MESH_DEBUG", "🟩 GATT-FETCH SUCCESS → id=" + id
-                        + " bytes=" + (cipher != null ? cipher.length : 0));
+                Log.d("MESH_DEBUG", "🟩 GATT-FETCH SUCCESS → id=" + id);
 
                 try {
                     payloadMap.put(id, cipher);
                     payloadTimestamps.put(id, System.currentTimeMillis());
+                    cache.put(String.valueOf(id));
 
-                    MeshMessage m = new MeshMessage();
-                    m.id = id;
+                    MeshMessage h = new MeshMessage();
+                    h.id = id;
+                    h.hopCount = 0;
+                    h.bluetoothDevice = dev;
 
-                    // 🟧 Log: Decryption starting
-                    Log.d("MESH_DEBUG", "🟧 DECRYPT-START → id=" + id);
-
-                    // optional: log raw hex
-                    Log.d("MESH_DEBUG", "🟥 CIPHERTEXT HEX → " + bytesToHex(cipher));
-
-                    processDecrypted(m, cipher);
+                    processDecrypted(h, cipher);
 
                 } finally {
                     fetchingSet.remove(id);
@@ -438,19 +441,17 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
 
             @Override
             public void onError(String reason) {
-                // ❌ Log: Error
+
                 Log.w("MESH_DEBUG", "❌ GATT-FETCH FAIL → id=" + id
-                        + " device=" + dev.getAddress()
+                        + " dev=" + dev.getAddress()
                         + " reason=" + reason);
 
                 fetchingSet.remove(id);
+
+                handler.postDelayed(() ->
+                        fetchPayloadFromDevice(dev, id), 400);
             }
         });
-    }
-
-
-    public byte[] getStoredCiphertext(long id) {
-        return payloadMap.get(id);
     }
 
     // ----------------------------------------------------------
