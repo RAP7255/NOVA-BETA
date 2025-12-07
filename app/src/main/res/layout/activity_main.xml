@@ -12,11 +12,25 @@
         android:padding="20dp"
         android:gravity="center_horizontal">
 
+        <!-- TITLE BAR WITH INFO BUTTON + THEME SWITCH -->
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp">
 
+            <!-- INFO BUTTON -->
+            <ImageButton
+                android:id="@+id/btnInfo"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_alignParentStart="true"
+                android:layout_centerVertical="true"
+                android:background="@android:color/transparent"
+                android:src="@android:drawable/ic_menu_info_details"
+                android:tint="?attr/colorPrimary"
+                android:contentDescription="App Info" />
+
+            <!-- APP TITLE -->
             <TextView
                 android:id="@+id/tvTitle"
                 android:layout_width="wrap_content"
@@ -27,6 +41,7 @@
                 android:textSize="32sp"
                 android:textStyle="bold" />
 
+            <!-- THEME SWITCH -->
             <Switch
                 android:id="@+id/theme_switch"
                 android:layout_width="wrap_content"
@@ -36,8 +51,10 @@
                 android:thumbTint="?attr/colorPrimary"
                 android:trackTint="?attr/text_secondary_dynamic"
                 android:contentDescription="Dark Mode Toggle" />
+
         </RelativeLayout>
 
+        <!-- SUBTITLE -->
         <TextView
             android:id="@+id/tvSubtitle"
             android:layout_width="wrap_content"
@@ -48,22 +65,7 @@
             android:gravity="center"
             android:layout_marginBottom="24dp" />
 
-        <TextView
-            android:id="@+id/tvActiveCount"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"
-            android:text="1,245 Active Users"
-            android:textColor="#FFFFFF"
-            android:background="@drawable/status_dot"
-            android:backgroundTint="@color/status_green"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="32dp" />
-
+        <!-- SOS BUTTON -->
         <Button
             android:id="@+id/btnSOS"
             android:layout_width="180dp"
@@ -77,6 +79,7 @@
             android:gravity="center"
             android:elevation="12dp" />
 
+        <!-- ACTION BUTTONS -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -85,6 +88,7 @@
             android:layout_marginBottom="40dp"
             android:weightSum="3">
 
+            <!-- CALL -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -100,16 +104,17 @@
                     android:backgroundTint="@color/call_red"
                     android:src="@android:drawable/ic_menu_call"
                     app:tint="@color/text_primary_dark"
-                    android:contentDescription="Call 911" />
+                    android:contentDescription="Emergency Call" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Call 911"
+                    android:text="Call"
                     android:textColor="?attr/text_primary_dynamic"
                     android:textSize="12sp" />
             </LinearLayout>
 
+            <!-- LOCATION -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -125,16 +130,17 @@
                     android:backgroundTint="@color/location_orange"
                     android:src="@android:drawable/ic_menu_mylocation"
                     app:tint="@color/text_primary_dark"
-                    android:contentDescription="Location" />
+                    android:contentDescription="Send Location" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Location"
+                    android:text="My Location"
                     android:textColor="?attr/text_primary_dynamic"
                     android:textSize="12sp" />
             </LinearLayout>
 
+            <!-- CONTACTS -->
             <LinearLayout
                 android:layout_weight="1"
                 android:layout_width="0dp"
@@ -159,9 +165,9 @@
                     android:textColor="?attr/text_primary_dynamic"
                     android:textSize="12sp" />
             </LinearLayout>
-
         </LinearLayout>
 
+        <!-- SYSTEM STATUS CARD -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -201,6 +207,7 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- RECENT ALERTS TITLE -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -210,12 +217,25 @@
             android:textStyle="bold"
             android:layout_marginBottom="16dp" />
 
+        <!-- ALERTS LIST -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/messagesRecyclerView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:clipToPadding="false"
             android:paddingBottom="24dp" />
+
+        <!-- FOOTER -->
+        <TextView
+            android:id="@+id/footerText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="© TEAM NOVA 2025 — All Rights Reserved"
+            android:textAlignment="center"
+            android:textColor="?attr/text_secondary_dynamic"
+            android:padding="16dp"
+            android:textSize="12sp"
+            android:layout_marginTop="20dp" />
 
     </LinearLayout>
 </ScrollView>

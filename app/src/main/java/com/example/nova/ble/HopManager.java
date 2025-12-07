@@ -26,11 +26,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * FINAL FIXED HopManager
- * - Works with fixed GattServer.java
- * - OEM safe (Xiaomi, Samsung, Realme)
- * - GATT-FETCH stable
- * - Race-condition safe (immediate + delayed NOTIFY)
+ * Patched HopManager (FINAL)
+ * - With messageFetchLock (prevents duplicate GATT fetch)
+ * - Stable with new PayloadGattClient device lock
+ * - OEM safe
+ * - Bounded retry/backoff for fetchPayloadFromDevice
  */
 public class HopManager implements BluetoothScanner.BluetoothScannerListener {
 
@@ -41,7 +41,12 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
 
     private final ConcurrentMap<Long, byte[]> payloadMap = new ConcurrentHashMap<>();
     private final ConcurrentMap<Long, Long> payloadTimestamps = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Boolean> fetchingSet = new ConcurrentHashMap<>();
+
+    // 🔵 NEW: Prevent duplicate fetch for same message id
+    private final ConcurrentHashMap<Long, Boolean> messageFetchLock = new ConcurrentHashMap<>();
+
+    // 🔵 NEW: retry counter for fetch attempts
+    private final ConcurrentHashMap<Long, Integer> fetchRetryCount = new ConcurrentHashMap<>();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Random random = new Random();
@@ -52,7 +57,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     private final PayloadGattClient gattClient;
     private final Context ctx;
 
-    // 🔵 GATT server reference used for NOTIFY callbacks
+    // GATT server instance
     private GattServer gattServer;
 
     private HopListener listener;
@@ -67,8 +72,13 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     public boolean isRunning() { return running; }
     public void setListener(HopListener l) { this.listener = l; }
 
+    // Retry policy
+    private static final int MAX_FETCH_RETRIES = 5;
+    private static final long BASE_RETRY_DELAY_MS = 1500L; // backoff base
+    private static final long MIN_RETRY_DELAY_MS = 400L; // legacy/minimum (not used for repeated failures)
+
     // ----------------------------------------------------------
-    // Constructor
+    // CONSTRUCTOR
     // ----------------------------------------------------------
     public HopManager(Context ctx,
                       MessageCache cache,
@@ -128,7 +138,6 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             payloadMap.put(m.id, encrypted);
             payloadTimestamps.put(m.id, now);
 
-            // NOTIFY subscribed devices
             if (gattServer != null)
                 gattServer.notifyAllSubscribed(encrypted);
 
@@ -140,7 +149,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     // ----------------------------------------------------------
-    // START / STOP MESH
+    // START / STOP
     // ----------------------------------------------------------
     public void start() {
 
@@ -161,9 +170,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     public void stop() {
-        try {
-            if (scanner != null) scanner.stopScan();
-        } catch (Exception ignored) {}
+        try { if (scanner != null) scanner.stopScan(); } catch (Exception ignored) {}
 
         stopGattServer();
         running = false;
@@ -197,23 +204,21 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             return;
         }
 
-        // Fetch from remote GATT
+        // FETCH if device exists & we don't already have the ciphertext
         if (header.bluetoothDevice != null)
             fetchPayloadFromDevice(header.bluetoothDevice, id);
     }
 
     // ----------------------------------------------------------
-    // PROCESS CIPHERTEXT → DECRYPT → CALLBACK → REBROADCAST
+    // DECRYPT PROCESS
     // ----------------------------------------------------------
     private void processDecrypted(MeshMessage header, byte[] ciphertext) {
 
         if (ciphertext == null) return;
 
-        // Store ciphertext
         payloadMap.put(header.id, ciphertext);
         payloadTimestamps.put(header.id, System.currentTimeMillis());
 
-        // ⭐ Notify subscribed devices (race-condition safe)
         if (gattServer != null)
             gattServer.notifyAllSubscribed(ciphertext);
 
@@ -223,7 +228,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             String asString = null;
             try { asString = new String(ciphertext, "UTF-8"); } catch (Exception ignore) {}
 
-            // ---------- ESP SPECIAL PARSE ----------
+            // ESP plaintext detection
             if (asString != null &&
                     (asString.startsWith("CIPHERTEXT_FROM_ESP32") ||
                             asString.startsWith("MESH:TYPE:"))) {
@@ -244,7 +249,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
                 return;
             }
 
-            // ---------- AES DECRYPT ----------
+            // AES decrypt path
             byte[] aad = ByteBuffer.allocate(8).putLong(header.id).array();
             byte[] plain = CryptoUtil.decrypt(ciphertext, aad);
 
@@ -293,7 +298,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     // ----------------------------------------------------------
-    // OUTGOING USER MESSAGE
+    // OUTGOING
     // ----------------------------------------------------------
     public MeshMessage sendOutgoing(String sender, int hop, String text) {
 
@@ -311,7 +316,6 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
             payloadMap.put(m.id, m.encryptedPayload);
             payloadTimestamps.put(m.id, System.currentTimeMillis());
 
-            // ⭐ Immediately notify subscribed devices
             if (gattServer != null)
                 gattServer.notifyAllSubscribed(m.encryptedPayload);
 
@@ -333,7 +337,7 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     // ----------------------------------------------------------
     private void scheduleRebroadcast(MeshMessage h) {
         handler.postDelayed(() -> rebroadcast(h),
-                150 + random.nextInt(150));
+                120 + random.nextInt(180));
     }
 
     private void rebroadcast(MeshMessage old) {
@@ -388,9 +392,6 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
         }
     }
 
-    // ----------------------------------------------------------
-    // REQUIRED BY GattServer
-    // ----------------------------------------------------------
     public byte[] getStoredCiphertext(long id) {
         try {
             return payloadMap.get(id);
@@ -401,19 +402,31 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
     }
 
     // ----------------------------------------------------------
-    // GATT FETCH w/ retry
+    // FETCH PAYLOAD (patched)
     // ----------------------------------------------------------
     public void fetchPayloadFromDevice(BluetoothDevice dev, long id) {
 
         if (dev == null) return;
 
-        synchronized (fetchingSet) {
-            if (fetchingSet.putIfAbsent(id, true) != null)
-                return;
+        // 🔵 Prevent duplicate fetch attempts
+        synchronized (messageFetchLock) {
+            if (messageFetchLock.putIfAbsent(id, true) != null) {
+                Log.d("MESH_DEBUG", "Fetch already in-progress for id=" + id);
+                return; // already fetching this id
+            }
         }
 
+        int currentRetry = fetchRetryCount.getOrDefault(id, 0);
+        if (currentRetry >= MAX_FETCH_RETRIES) {
+            Log.w("MESH_DEBUG", "Max retries reached for id=" + id + " — aborting fetch");
+            // ensure lock removed to avoid deadlocks
+            messageFetchLock.remove(id);
+            return;
+        }
+
+        String devAddr = dev != null ? dev.getAddress() : "null";
         Log.d("MESH_DEBUG", "🟦 GATT-FETCH START → id=" + id
-                + " from " + dev.getAddress());
+                + " from " + devAddr + " retry=" + currentRetry);
 
         gattClient.fetchPayload(dev, id, new PayloadGattClient.Callback() {
 
@@ -423,6 +436,9 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
                 Log.d("MESH_DEBUG", "🟩 GATT-FETCH SUCCESS → id=" + id);
 
                 try {
+                    // reset retry counter
+                    fetchRetryCount.remove(id);
+
                     payloadMap.put(id, cipher);
                     payloadTimestamps.put(id, System.currentTimeMillis());
                     cache.put(String.valueOf(id));
@@ -435,21 +451,41 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
                     processDecrypted(h, cipher);
 
                 } finally {
-                    fetchingSet.remove(id);
+                    messageFetchLock.remove(id);
                 }
             }
 
             @Override
             public void onError(String reason) {
 
+                int nextRetry = fetchRetryCount.getOrDefault(id, 0) + 1;
+                fetchRetryCount.put(id, nextRetry);
+
                 Log.w("MESH_DEBUG", "❌ GATT-FETCH FAIL → id=" + id
-                        + " dev=" + dev.getAddress()
-                        + " reason=" + reason);
+                        + " dev=" + devAddr
+                        + " reason=" + reason
+                        + " retry=" + nextRetry);
 
-                fetchingSet.remove(id);
+                // release lock for this id (so other threads aren't blocked)
+                messageFetchLock.remove(id);
 
+                // If retries exceeded, abort further attempts
+                if (nextRetry >= MAX_FETCH_RETRIES) {
+                    Log.w("MESH_DEBUG", "Aborting fetch for id=" + id + " after " + nextRetry + " attempts");
+                    return;
+                }
+
+                // Backoff: increase delay with each retry to avoid flooding BLE stack
+                long delay = BASE_RETRY_DELAY_MS + (nextRetry * 300L);
+
+                // For transient 'DeviceBusy' or 'GATT_FAIL_257' prefer slightly longer backoff
+                if (reason != null && (reason.contains("DeviceBusy") || reason.contains("GATT_FAIL_257"))) {
+                    delay += 800;
+                }
+
+                // Schedule retry
                 handler.postDelayed(() ->
-                        fetchPayloadFromDevice(dev, id), 400);
+                        fetchPayloadFromDevice(dev, id), delay);
             }
         });
     }
@@ -469,7 +505,8 @@ public class HopManager implements BluetoothScanner.BluetoothScannerListener {
 
                 payloadMap.remove(id);
                 payloadTimestamps.remove(id);
-                fetchingSet.remove(id);
+                messageFetchLock.remove(id);
+                fetchRetryCount.remove(id);
 
                 Log.d(TAG, "CLEAN: removed id=" + id);
             }

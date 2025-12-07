@@ -12,6 +12,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -20,6 +21,7 @@ import android.util.Log;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -30,6 +32,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -37,6 +40,8 @@ import com.example.nova.ble.HopManager;
 import com.example.nova.model.MeshMessage;
 import com.example.nova.service.BLEForegroundService;
 import com.example.nova.service.MeshService;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
 
 import java.util.ArrayList;
 
@@ -45,7 +50,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS = "nova_prefs";
     private static final String KEY_USERNAME = "username";
     private static final String KEY_DARK_MODE = "isDarkMode";
-
     private static final int PERMISSION_CODE = 2001;
     private static final String CHANNEL_ID = "nova_alerts";
 
@@ -54,20 +58,23 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvTitle;
     private RecyclerView recycler;
 
+    private ImageButton btnCall, btnLocation, btnContacts, btnInfo;
+
     private SharedPreferences sharedPrefs;
     private String username;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final ArrayList<MeshMessage> messageList = new ArrayList<>();
     private MessagesAdapter adapter;
 
-    // guard so we attach listener exactly once from activity
+    // ViewModel
+    private MessagesViewModel viewModel;
+    private ArrayList<MeshMessage> messageList;
+
     private boolean hopListenerAttached = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
-        // Init shared prefs before theme reads
         sharedPrefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         boolean isDark = sharedPrefs.getBoolean(KEY_DARK_MODE, false);
 
@@ -80,11 +87,20 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // UI binds
+        // ViewModel
+        viewModel = new ViewModelProvider(this).get(MessagesViewModel.class);
+        messageList = viewModel.messageList;
+
+        // Bind UI
         btnSOS = findViewById(R.id.btnSOS);
         tvTitle = findViewById(R.id.tvTitle);
         recycler = findViewById(R.id.messagesRecyclerView);
         themeSwitch = findViewById(R.id.theme_switch);
+
+        btnCall = findViewById(R.id.btnCall);
+        btnLocation = findViewById(R.id.btnLocation);
+        btnContacts = findViewById(R.id.btnContacts);
+        btnInfo = findViewById(R.id.btnInfo);   // NEW
 
         themeSwitch.setChecked(isDark);
 
@@ -98,10 +114,96 @@ public class MainActivity extends AppCompatActivity {
         requestAllPermissions();
         createNotificationChannel();
 
+        // SOS Send
         btnSOS.setOnClickListener(v -> sendSOS());
+
+        // Info Button → App About Dialog
+        btnInfo.setOnClickListener(v -> showAppInfoDialog());
+
+        // CALL MENU
+        btnCall.setOnClickListener(v -> {
+            AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
+            builder.setTitle("Emergency Services")
+                    .setItems(new CharSequence[]{"Police (100)", "Ambulance (108)", "Fire Brigade (101)"}, (dialog, which) -> {
+
+                        String number = "";
+                        switch (which) {
+                            case 0: number = "100"; break;
+                            case 1: number = "108"; break;
+                            case 2: number = "101"; break;
+                        }
+
+                        Intent intent = new Intent(Intent.ACTION_DIAL);
+                        intent.setData(Uri.parse("tel:" + number));
+                        startActivity(intent);
+                    });
+            builder.show();
+        });
+
+        // LOCATION SEND
+        btnLocation.setOnClickListener(v -> {
+
+            FusedLocationProviderClient fusedLocationClient =
+                    LocationServices.getFusedLocationProviderClient(MainActivity.this);
+
+            if (ActivityCompat.checkSelfPermission(
+                    MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+
+                Toast.makeText(MainActivity.this, "Location permission required", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            fusedLocationClient.getLastLocation()
+                    .addOnSuccessListener(location -> {
+                        if (location != null) {
+
+                            double lat = location.getLatitude();
+                            double lon = location.getLongitude();
+
+                            String text = "Location: Lat=" + lat + " Lon=" + lon;
+
+                            if (HopManager.hopManagerInstance != null && username != null) {
+                                HopManager.hopManagerInstance.sendOutgoing(username, 0, text);
+                            }
+
+                            Toast.makeText(MainActivity.this, text, Toast.LENGTH_LONG).show();
+
+                        } else {
+                            Toast.makeText(MainActivity.this, "Unable to fetch location", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        });
+
+        // CONTACTS PAGE
+        btnContacts.setOnClickListener(v -> {
+            Intent i = new Intent(MainActivity.this, EmergencyContactsActivity.class);
+            startActivity(i);
+        });
     }
 
-    // THEME
+
+    // ---------------------- INFO DIALOG ----------------------
+    private void showAppInfoDialog() {
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("About NOVA");
+
+        String msg =
+                "🔹 Version: 1.0.0\n" +
+                        "🔹 Vision: Offline emergency communication for everyone.\n" +
+                        "🔹 Developer: Team NOVA\n" +
+                        "🔹 Website: https://teamnova.example\n" +
+                        "🔹 Contribute: https://github.com/teamnova";
+
+        builder.setMessage(msg);
+
+        builder.setPositiveButton("OK", null);
+        builder.show();
+    }
+
+
+
+    // ---------------------- THEME SWITCH ----------------------
     private void setupThemeSwitchListener() {
         themeSwitch.setOnCheckedChangeListener((btn, isChecked) -> {
             sharedPrefs.edit().putBoolean(KEY_DARK_MODE, isChecked).apply();
@@ -112,7 +214,8 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // SOS animation
+
+    // ---------------------- ANIMATION ----------------------
     private void startSosPulseAnimation() {
         ObjectAnimator sx = ObjectAnimator.ofFloat(btnSOS, "scaleX", 1.0f, 1.08f);
         ObjectAnimator sy = ObjectAnimator.ofFloat(btnSOS, "scaleY", 1.0f, 1.08f);
@@ -121,7 +224,6 @@ public class MainActivity extends AppCompatActivity {
         sy.setRepeatCount(ValueAnimator.INFINITE);
         sx.setRepeatMode(ValueAnimator.REVERSE);
         sy.setRepeatMode(ValueAnimator.REVERSE);
-
         sx.setDuration(700);
         sy.setDuration(700);
 
@@ -131,9 +233,9 @@ public class MainActivity extends AppCompatActivity {
         set.start();
     }
 
-    // PERMISSIONS
-    private void requestAllPermissions() {
 
+    // ---------------------- PERMISSIONS ----------------------
+    private void requestAllPermissions() {
         ArrayList<String> list = new ArrayList<>();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -164,11 +266,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // helper: returns true when permission NOT granted (keeps old logic)
     private boolean check(String perm) {
         return ActivityCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED;
     }
 
+
+    // ---------------------- PERMISSION RESULT ----------------------
     @Override
     public void onRequestPermissionsResult(int code, @NonNull String[] perm, @NonNull int[] res) {
         super.onRequestPermissionsResult(code, perm, res);
@@ -185,29 +288,26 @@ public class MainActivity extends AppCompatActivity {
         initAfterPermissions();
     }
 
-    // AFTER PERMISSIONS
-    private void initAfterPermissions() {
 
+    // ---------------------- INIT AFTER PERMISSIONS ----------------------
+    private void initAfterPermissions() {
         if (!isBluetoothOn()) {
             Toast.makeText(this, "Enable Bluetooth", Toast.LENGTH_LONG).show();
             return;
         }
 
         askNameIfRequired();
-
-        // 1) Start BLE foreground service (keeps GATT alive on aggressive OEMs)
         startBleForegroundService();
-
-        // 2) Start MeshService slightly later to avoid race (MeshService will start HopManager)
         handler.postDelayed(this::startMeshService, 300);
     }
+
 
     private boolean isBluetoothOn() {
         BluetoothAdapter ad = BluetoothAdapter.getDefaultAdapter();
         return ad != null && ad.isEnabled();
     }
 
-    // USERNAME
+
     private void askNameIfRequired() {
         username = sharedPrefs.getString(KEY_USERNAME, null);
         if (username != null) return;
@@ -227,7 +327,7 @@ public class MainActivity extends AppCompatActivity {
         b.show();
     }
 
-    // FOREGROUND SERVICE STARTER
+
     private void startBleForegroundService() {
         try {
             Intent svc = new Intent(this, BLEForegroundService.class);
@@ -240,7 +340,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // MESH SERVICE (MeshService will own HopManager.start())
+
     private void startMeshService() {
         Intent i = new Intent(this, MeshService.class);
 
@@ -248,9 +348,9 @@ public class MainActivity extends AppCompatActivity {
             startForegroundService(i);
         else startService(i);
 
-        // waitForHop is now only attaching listener, not starting HopManager
         waitForHop();
     }
+
 
     private void waitForHop() {
         handler.postDelayed(() -> {
@@ -260,8 +360,6 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            // DON'T call HopManager.start() here — MeshService is responsible for starting the engine.
-            // Just attach the UI listener (attach only once).
             if (!hopListenerAttached) {
                 attachHopListener();
                 hopListenerAttached = true;
@@ -270,7 +368,7 @@ public class MainActivity extends AppCompatActivity {
         }, 200);
     }
 
-    // ATTACH UI LISTENER
+
     private void attachHopListener() {
         if (HopManager.hopManagerInstance == null) return;
 
@@ -287,7 +385,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // SEND SOS
+
     private void sendSOS() {
         if (HopManager.hopManagerInstance == null) {
             Toast.makeText(this, "Mesh not ready", Toast.LENGTH_SHORT).show();
@@ -310,7 +408,7 @@ public class MainActivity extends AppCompatActivity {
         recycler.scrollToPosition(0);
     }
 
-    // NOTIFICATIONS
+
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
 
@@ -321,6 +419,7 @@ public class MainActivity extends AppCompatActivity {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(ch);
     }
+
 
     private void showNotification(MeshMessage msg) {
 

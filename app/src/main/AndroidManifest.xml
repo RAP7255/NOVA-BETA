@@ -30,7 +30,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- BOOT PERMISSION MUST BE HERE, NOT INSIDE APPLICATION -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- =========================================================
@@ -58,26 +57,27 @@
         <activity
             android:name=".MainActivity"
             android:exported="true">
-
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+        <!-- 🆕 REQUIRED ACTIVITY (Fix Crash) -->
+        <activity android:name=".EmergencyContactsActivity" android:exported="false" />
+
         <!-- INTERNAL ACTIVITIES -->
         <activity android:name=".PresenceTestActivity" android:exported="false" />
         <activity android:name=".AlertActivity" android:exported="false" />
         <activity android:name=".SOSActivity" android:exported="false" />
 
-        <!-- MAIN MESH SERVICE -->
+        <!-- SERVICES -->
         <service
             android:name=".service.MeshService"
             android:exported="false"
             android:enabled="true"
             android:foregroundServiceType="connectedDevice|dataSync|location" />
 
-        <!-- BLE FOREGROUND SERVICE -->
         <service
             android:name=".service.BLEForegroundService"
             android:exported="false"
